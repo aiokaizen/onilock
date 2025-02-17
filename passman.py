@@ -1,7 +1,14 @@
 from typing import Optional
-import typer
 
-from passman.password_manager import copy_password, initialize, save_password
+import typer
+from cryptography.fernet import Fernet
+
+from passman.password_manager import (
+    copy_password,
+    generate_random_password,
+    initialize,
+    save_password,
+)
 
 app = typer.Typer()
 
@@ -42,6 +49,15 @@ def copy_pwd(id: str):
         id (str): The target password identifier.
     """
     return copy_password(id)
+
+
+@app.command()
+def generate_secret_key():
+    """
+    Generate and returns a random secret key to use for your project.
+    """
+    secret_key = Fernet.generate_key()
+    print(secret_key.decode())
 
 
 if __name__ == "__main__":
