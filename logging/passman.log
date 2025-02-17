@@ -6,3 +6,59 @@
 2025-02-17 11:48:07,566 DEBUG faslava.logging.LoggingManager Initializing database with a master password.
 2025-02-17 11:48:07,566 WARNING faslava.logging.LoggingManager Master password not provided! A random password will be generated and returned.
 2025-02-17 11:48:07,567 DEBUG faslava.logging.LoggingManager Generating random password.
+2025-02-17 12:12:09,311 DEBUG faslava.logging.LoggingManager Initializing database with a master password.
+2025-02-17 12:12:09,312 WARNING faslava.logging.LoggingManager Master password not provided! A random password will be generated and returned.
+2025-02-17 12:12:09,312 DEBUG faslava.logging.LoggingManager Generating random password.
+2025-02-17 12:16:42,089 DEBUG faslava.logging.LoggingManager Initializing database with a master password.
+2025-02-17 12:16:42,089 WARNING faslava.logging.LoggingManager Master password not provided! A random password will be generated and returned.
+2025-02-17 12:16:42,090 DEBUG faslava.logging.LoggingManager Generating random password.
+2025-02-17 12:18:32,669 DEBUG faslava.logging.LoggingManager Initializing database with a master password.
+2025-02-17 12:18:32,670 WARNING faslava.logging.LoggingManager Master password not provided! A random password will be generated and returned.
+2025-02-17 12:18:32,670 DEBUG faslava.logging.LoggingManager Generating random password.
+2025-02-17 12:20:16,453 DEBUG faslava.logging.LoggingManager Initializing database with a master password.
+2025-02-17 12:20:16,453 WARNING faslava.logging.LoggingManager Master password not provided! A random password will be generated and returned.
+2025-02-17 12:20:16,453 DEBUG faslava.logging.LoggingManager Generating random password.
+2025-02-17 12:20:16,633 INFO faslava.logging.LoggingManager Initialization completed successfully.
+2025-02-17 12:21:10,463 DEBUG faslava.logging.LoggingManager Initializing database with a master password.
+2025-02-17 12:21:10,463 WARNING faslava.logging.LoggingManager Master password not provided! A random password will be generated and returned.
+2025-02-17 12:21:10,464 DEBUG faslava.logging.LoggingManager Generating random password.
+2025-02-17 12:21:10,645 INFO faslava.logging.LoggingManager Initialization completed successfully.
+2025-02-17 12:21:26,249 DEBUG faslava.logging.LoggingManager Initializing database with a master password.
+2025-02-17 12:21:26,249 WARNING faslava.logging.LoggingManager Master password not provided! A random password will be generated and returned.
+2025-02-17 12:21:26,249 DEBUG faslava.logging.LoggingManager Generating random password.
+2025-02-17 12:21:26,433 INFO faslava.logging.LoggingManager Initialization completed successfully.
+2025-02-17 12:24:11,854 DEBUG faslava.logging.LoggingManager Encrypting the password.
+2025-02-17 12:24:11,855 DEBUG faslava.logging.LoggingManager Encrypted password: b'gAAAAABnsxxbtIO6KTDIXBW7KR8eSfXF8Wx5JAerzkaRUVycCgdai5crsGPmVtUPFc96dQ1e3oagtl0_FDnXGvwifazfz49qeg=='
+2025-02-17 12:24:11,856 INFO faslava.logging.LoggingManager Password saved successfully.
+2025-02-17 12:25:17,208 DEBUG faslava.logging.LoggingManager Decrypting the password.
+2025-02-17 12:26:03,353 DEBUG faslava.logging.LoggingManager Decrypting the password.
+2025-02-17 12:32:33,028 DEBUG faslava.logging.LoggingManager Initializing database with a master password.
+2025-02-17 12:32:33,028 WARNING faslava.logging.LoggingManager Master password not provided! A random password will be generated and returned.
+2025-02-17 12:32:33,028 DEBUG faslava.logging.LoggingManager Generating random password.
+2025-02-17 12:32:33,215 INFO faslava.logging.LoggingManager Initialization completed successfully.
+2025-02-17 12:32:47,061 DEBUG faslava.logging.LoggingManager Encrypting the password.
+2025-02-17 12:32:47,063 DEBUG faslava.logging.LoggingManager Encrypted password: gAAAAABnsx5faXa9UMbsnf6xQ1aZCllM4Tb_clwJWC0SY-uwVXLyRQ_OLfnhYyRD2HwDwyzNer1py6CIFncuk2Hbd6NHLVFhZw==
+2025-02-17 12:32:47,063 DEBUG faslava.logging.LoggingManager B64 Encrypted password: Z0FBQUFBQm5zeDVmYVhhOVVNYnNuZjZ4UTFhWkNsbE00VGJfY2x3SldDMFNZLXV3VlhMeVJRX09MZm5oWXlSRDJId0R3eXpOZXIxcHk2Q0lGbmN1azJIYmQ2TkhMVkZoWnc9PQ==
+2025-02-17 12:32:47,064 INFO faslava.logging.LoggingManager Password saved successfully.
+2025-02-17 12:33:00,758 DEBUG faslava.logging.LoggingManager Raw password: Z0FBQUFBQm5zeDVmYVhhOVVNYnNuZjZ4UTFhWkNsbE00VGJfY2x3SldDMFNZLXV3VlhMeVJRX09MZm5oWXlSRDJId0R3eXpOZXIxcHk2Q0lGbmN1azJIYmQ2TkhMVkZoWnc9PQ==
+2025-02-17 12:33:00,759 DEBUG faslava.logging.LoggingManager Decrypting the password.
+2025-02-17 12:33:00,762 DEBUG faslava.logging.LoggingManager Decrypted password: b'oB8_*2R)#bn7'
+2025-02-17 12:33:36,826 DEBUG faslava.logging.LoggingManager Raw password: Z0FBQUFBQm5zeDVmYVhhOVVNYnNuZjZ4UTFhWkNsbE00VGJfY2x3SldDMFNZLXV3VlhMeVJRX09MZm5oWXlSRDJId0R3eXpOZXIxcHk2Q0lGbmN1azJIYmQ2TkhMVkZoWnc9PQ==
+2025-02-17 12:33:36,826 DEBUG faslava.logging.LoggingManager Decrypting the password.
+2025-02-17 12:33:36,827 DEBUG faslava.logging.LoggingManager Decrypted password: oB8_*2R)#bn7
+2025-02-17 12:38:39,159 DEBUG faslava.logging.LoggingManager Initializing database with a master password.
+2025-02-17 12:38:39,358 INFO faslava.logging.LoggingManager Initialization completed successfully.
+2025-02-17 12:39:02,864 DEBUG faslava.logging.LoggingManager Encrypting the password.
+2025-02-17 12:39:02,865 DEBUG faslava.logging.LoggingManager Encrypted password: gAAAAABnsx_WBiqCK4ggUZOUNAr2ZZckqO1gIWe2Zq1mVxt8GpkUoo8kpGBeJrzLa54DZGblRj0QRDA-QpjtpjX0R7tsFYEbtA==
+2025-02-17 12:39:02,866 DEBUG faslava.logging.LoggingManager B64 Encrypted password: Z0FBQUFBQm5zeF9XQmlxQ0s0Z2dVWk9VTkFyMlpaY2txTzFnSVdlMlpxMW1WeHQ4R3BrVW9vOGtwR0JlSnJ6TGE1NERaR2JsUmowUVJEQS1RcGp0cGpYMFI3dHNGWUVidEE9PQ==
+2025-02-17 12:39:02,866 INFO faslava.logging.LoggingManager Password saved successfully.
+2025-02-17 12:47:06,977 DEBUG faslava.logging.LoggingManager Encrypting the password.
+2025-02-17 12:47:06,978 DEBUG faslava.logging.LoggingManager Encrypted password: gAAAAABnsyG6Q4O1tDfVQko8Fvbln2Zey8M-26AkNVhBtbbaxliJya91ux1o0ZjCcSr5-I1AXXyLPfJgKezW6UevvTGfH3hHow==
+2025-02-17 12:47:06,978 DEBUG faslava.logging.LoggingManager B64 Encrypted password: Z0FBQUFBQm5zeUc2UTRPMXREZlZRa284RnZibG4yWmV5OE0tMjZBa05WaEJ0YmJheGxpSnlhOTF1eDFvMFpqQ2NTcjUtSTFBWFh5TFBmSmdLZXpXNlVldnZUR2ZIM2hIb3c9PQ==
+2025-02-17 12:47:06,978 INFO faslava.logging.LoggingManager Password saved successfully.
+2025-02-17 12:49:49,742 DEBUG faslava.logging.LoggingManager Raw password: Z0FBQUFBQm5zeUc2UTRPMXREZlZRa284RnZibG4yWmV5OE0tMjZBa05WaEJ0YmJheGxpSnlhOTF1eDFvMFpqQ2NTcjUtSTFBWFh5TFBmSmdLZXpXNlVldnZUR2ZIM2hIb3c9PQ==
+2025-02-17 12:49:49,742 DEBUG faslava.logging.LoggingManager Decrypting the password.
+2025-02-17 12:49:49,743 DEBUG faslava.logging.LoggingManager Decrypted password: oB8_*2R)#bn7
+2025-02-17 12:50:20,845 DEBUG faslava.logging.LoggingManager Raw password: Z0FBQUFBQm5zeUc2UTRPMXREZlZRa284RnZibG4yWmV5OE0tMjZBa05WaEJ0YmJheGxpSnlhOTF1eDFvMFpqQ2NTcjUtSTFBWFh5TFBmSmdLZXpXNlVldnZUR2ZIM2hIb3c9PQ==
+2025-02-17 12:50:20,845 DEBUG faslava.logging.LoggingManager Decrypting the password.
+2025-02-17 12:50:20,846 DEBUG faslava.logging.LoggingManager Decrypted password: oB8_*2R)#bn7
