@@ -13,7 +13,7 @@ class JsonEngine:
 
     def write(self, data: Dict) -> None:
         with open(self.filepath, "w") as f:
-            json.dump(data, f)
+            json.dump(data, f, indent=4)
 
     def read(self) -> Dict:
         if not os.path.exists(self.filepath):

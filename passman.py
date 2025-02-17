@@ -7,6 +7,7 @@ from passman.password_manager import (
     copy_password,
     generate_random_password,
     initialize,
+    remove_password,
     save_password,
 )
 
@@ -14,7 +15,7 @@ app = typer.Typer()
 
 
 @app.command()
-def init(master_password: Optional[str] = None):
+def init(name: str, master_password: Optional[str] = None):
     """
     Initialize the password manager whith a master password.
 
@@ -24,7 +25,7 @@ def init(master_password: Optional[str] = None):
     Args:
         master_password (Optional[str]): The master password used to secure all the other accounts.
     """
-    return initialize(master_password)
+    return initialize(name, master_password)
 
 
 @app.command()
@@ -49,6 +50,18 @@ def copy_pwd(id: str):
         id (str): The target password identifier.
     """
     return copy_password(id)
+
+
+@app.command()
+def rm_pwd(id: str, master_password: str):
+    """
+    Remove a password.
+
+    Args:
+        id (str): The target password identifier.
+        master_password (str): The master password.
+    """
+    return remove_password(id, master_password)
 
 
 @app.command()
