@@ -1,6 +1,6 @@
 [project]
 name = "passman"
-version = "1.0.0"
+version = "1.1.0"
 description = "Password Manager"
 authors = [
     {name = "Mouad Kommir",email = "mouad.kommir@payticconnect.com"}
