@@ -1,3 +1,5 @@
+from datetime import datetime
+import os
 import secrets
 import string
 from typing import Optional
@@ -11,9 +13,6 @@ from core.settings import settings
 from core.logging_manager import logger
 from db import DatabaseManager
 from db.models import Account, Password
-
-
-db_manager = DatabaseManager(database_url=settings.DB_URL)
 
 
 __all__ = [
@@ -44,7 +43,21 @@ def generate_random_password(
     return "".join(secrets.choice(characters) for _ in range(length))
 
 
-def initialize(name: str, master_password: Optional[str] = None):
+def get_config_engine():
+    """Get user config engine."""
+
+    db_manager = DatabaseManager(database_url=settings.SETUP_FILEPATH)
+    setup_engine = db_manager.get_engine()
+    setup_data = setup_engine.read()
+    b64encrypted_config_filepath = setup_data[settings.DB_NAME]["filepath"]
+    cipher = Fernet(settings.SECRET_KEY.encode())
+    encrypted_filepath = base64.b64decode(b64encrypted_config_filepath)
+    config_filepath = cipher.decrypt(encrypted_filepath).decode()
+
+    return db_manager.add_engine("data", config_filepath)
+
+
+def initialize(master_password: Optional[str] = None, filepath: Optional[str] = None):
     """
     Initialize the password manager whith a master password.
 
@@ -52,16 +65,26 @@ def initialize(name: str, master_password: Optional[str] = None):
         The master password should be very secure and be saved in a safe place.
 
     Args:
-        name (str): The account name.
+        name (Optional[str]): The account name, if ommitted, it will be taken from env.
         master_password (Optional[str]): The master password used to secure all the other accounts.
     """
     logger.debug("Initializing database with a master password.")
 
-    engine = db_manager.get_engine()
-    data = engine.read()
+    name = settings.DB_NAME
 
-    if data:
-        raise Exception(f"Database already initialized.")
+    if not filepath:
+        filepath = os.path.join(
+            os.path.expanduser("~"), ".passman", "shadow", f"{name}.json"
+        )
+
+    db_manager = DatabaseManager(database_url=filepath)
+    engine = db_manager.get_engine()
+    setup_engine = db_manager.add_engine("setup", settings.SETUP_FILEPATH)
+    data = engine.read()
+    setup_data = setup_engine.read()
+
+    if data or name in setup_data:
+        raise Exception("Database already initialized.")
 
     if not master_password:
         logger.warning(
@@ -85,13 +108,32 @@ def initialize(name: str, master_password: Optional[str] = None):
         master_password=b64_hashed_master_password,
         passwords=list(),
     )
-    # engine.write(account.to_dict())
     engine.write(account.model_dump())
+
+    logger.info("Updating the current setup file.")
+
+    # Encrypting filepath
+    cipher = Fernet(settings.SECRET_KEY.encode())
+    logger.debug("Encrypting filepath.")
+    encrypted_filepath = cipher.encrypt(filepath.encode())
+    b64_encrypted_filepath = base64.b64encode(encrypted_filepath).decode()
+
+    setup_data[name] = {
+        "filepath": b64_encrypted_filepath,
+    }
+
+    setup_engine.write(setup_data)
+
     logger.info("Initialization completed successfully.")
     return master_password
 
 
-def save_password(id: str, password: Optional[str] = None, url: Optional[str] = None):
+def save_password(
+    id: str,
+    password: Optional[str] = None,
+    url: Optional[str] = None,
+    description: Optional[str] = None,
+):
     """
     Encrypt and save a password.
 
@@ -99,8 +141,9 @@ def save_password(id: str, password: Optional[str] = None, url: Optional[str] = 
         id (str): An identifier used to retrieve the password.
         password (Optional[str]): The password to encrypt, automatically generated if not provided.
         url (Optional[str]): The url / service where the password is used.
+        description (Optional[str]): A password description.
     """
-    engine = db_manager.get_engine()
+    engine = get_config_engine()
     data = engine.read()
     if not data:
         raise Exception("This database is not initialized.")
@@ -116,18 +159,41 @@ def save_password(id: str, password: Optional[str] = None, url: Optional[str] = 
     cipher = Fernet(settings.SECRET_KEY.encode())
     logger.debug("Encrypting the password.")
     encrypted_password = cipher.encrypt(password.encode())
-    b64_encrypted_password = base64.b64encode(encrypted_password).decode()
     logger.debug(f"Encrypted password: {encrypted_password.decode()}")
+    b64_encrypted_password = base64.b64encode(encrypted_password).decode()
     logger.debug(f"B64 Encrypted password: {b64_encrypted_password}")
     password_model = Password(
         id=id,
         encrypted_password=b64_encrypted_password,
         url=url,
+        description=description,
+        created_at=int(datetime.now().timestamp()),
     )
     account.passwords.append(password_model)
     engine.write(account.model_dump())
     logger.info("Password saved successfully.")
     return password
+
+
+def list_passwords():
+    """List all available passwords."""
+
+    engine = get_config_engine()
+    data = engine.read()
+    account = Account(**data)
+
+    print(f"Passwords list for {account.name}")
+
+    for pwd in account.passwords:
+        created_date = datetime.fromtimestamp(pwd.created_at) if pwd.created_at else ""
+        print(f"""
+=================== {pwd.id} ===================
+
+password:     \t{pwd.encrypted_password[:15]}***{pwd.encrypted_password[-15:]}
+domain:       \t{pwd.url}
+description:  \t{pwd.description}
+creation date:\t{created_date.strftime("%Y-%m-%d %H:%M:%S")}
+        """)
 
 
 def copy_password(id: str):
@@ -137,20 +203,20 @@ def copy_password(id: str):
     Args:
         id (str): The target password identifier.
     """
-    engine = db_manager.get_engine()
+    engine = get_config_engine()
     data = engine.read()
     if not data:
         raise Exception("This database is not initialized.")
 
     account = Account(**data)
 
-    cipher = Fernet(settings.SECRET_KEY.encode())
     password = account.get_password(id)
     if not password:
         raise Exception("Password not found.")
 
     logger.debug(f"Raw password: {password.encrypted_password}")
     logger.debug("Decrypting the password.")
+    cipher = Fernet(settings.SECRET_KEY.encode())
     encrypted_password = base64.b64decode(password.encrypted_password)
     decrypted_password = cipher.decrypt(encrypted_password).decode()
     logger.debug(f"Decrypted password: {decrypted_password}")
@@ -165,21 +231,14 @@ def verify_master_password(master_password: str):
         id (str): The target password identifier.
         master_password (str): The master password.
     """
-    engine = db_manager.get_engine()
+    engine = get_config_engine()
     data = engine.read()
     if not data:
         raise Exception("This database is not initialized.")
 
     account = Account(**data)
     hashed_master_password = base64.b64decode(account.master_password)
-    password_match = bcrypt.checkpw(master_password.encode(), hashed_master_password)
-
-    print("password_match:", password_match)
-
-    if not password_match:
-        return False
-
-    return True
+    return bcrypt.checkpw(master_password.encode(), hashed_master_password)
 
 
 def remove_password(id: str, master_password: str):
@@ -190,7 +249,7 @@ def remove_password(id: str, master_password: str):
         id (str): The target password identifier.
         master_password (str): The master password.
     """
-    engine = db_manager.get_engine()
+    engine = get_config_engine()
     data = engine.read()
     if not data:
         raise Exception("This database is not initialized.")

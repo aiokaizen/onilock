@@ -3,10 +3,10 @@ from typing import Optional
 import typer
 from cryptography.fernet import Fernet
 
-from passman.password_manager import (
+from core.password_manager import (
     copy_password,
-    generate_random_password,
     initialize,
+    list_passwords,
     remove_password,
     save_password,
 )
@@ -15,7 +15,10 @@ app = typer.Typer()
 
 
 @app.command()
-def init(name: str, master_password: Optional[str] = None):
+def init(
+    master_password: Optional[str] = None,
+    filepath: Optional[str] = None,
+):
     """
     Initialize the password manager whith a master password.
 
@@ -24,12 +27,18 @@ def init(name: str, master_password: Optional[str] = None):
 
     Args:
         master_password (Optional[str]): The master password used to secure all the other accounts.
+        filepath (Optional[str]): The master password used to secure all the other accounts.
     """
-    return initialize(name, master_password)
+    return initialize(master_password, filepath)
 
 
 @app.command()
-def save_pwd(id: str, password: Optional[str] = None, url: Optional[str] = None):
+def save_pwd(
+    id: str,
+    password: Optional[str] = None,
+    url: Optional[str] = None,
+    description: Optional[str] = None,
+):
     """
     Encrypt and save a password.
 
@@ -37,8 +46,16 @@ def save_pwd(id: str, password: Optional[str] = None, url: Optional[str] = None)
         id (str): An identifier used to retrieve the password.
         password (Optional[str]): The password to encrypt, automatically generated if not provided.
         url (Optional[str]): The url / service where the password is used.
+        description (Optional[str]): A password description.
     """
-    return save_password(id, password, url)
+    return save_password(id, password, url, description)
+
+
+@app.command()
+def list_pwds():
+    """List all available passwords."""
+
+    return list_passwords()
 
 
 @app.command()

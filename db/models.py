@@ -1,11 +1,14 @@
+from datetime import datetime
 from typing import List, Optional
 from pydantic import BaseModel, Field
 
 
 class Password(BaseModel):
     id: str = Field(description="Password Identification")
-    encrypted_password: str
+    encrypted_password: str = Field(description="Encrypted Password")
     url: Optional[str] = Field(default=None, description="URL or Service name")
+    description: Optional[str] = Field(default=None, description="Description")
+    created_at: int = Field(description="Creation date")
 
 
 class Account(BaseModel):
@@ -24,7 +27,3 @@ class Account(BaseModel):
             if password.id == id:
                 del self.passwords[index]
                 break
-
-    def to_dict(self):
-        account = self.model_dump()
-        print("Account:", account)
