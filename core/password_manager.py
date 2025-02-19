@@ -1,6 +1,7 @@
 from datetime import datetime
 import os
 import secrets
+import random
 import string
 from typing import Optional
 import base64
@@ -38,9 +39,22 @@ def generate_random_password(
     """
     logger.debug("Generating random password.")
     characters = string.ascii_letters + string.digits
+    punctuation = "@$!%*?&_}{()-=+"
+    password = [
+        secrets.choice(string.ascii_lowercase),
+        secrets.choice(string.ascii_uppercase),
+        secrets.choice(string.digits),
+    ]
     if include_special_characters:
-        characters += string.punctuation
-    return "".join(secrets.choice(characters) for _ in range(length))
+        password.append(secrets.choice(punctuation))
+        characters += punctuation
+
+    password += [secrets.choice(characters) for _ in range(length)]
+
+    # Shuffle password in-place.
+    random.shuffle(password)
+
+    return "".join(password)
 
 
 def get_config_engine():
@@ -186,14 +200,16 @@ def list_passwords():
 
     for pwd in account.passwords:
         created_date = datetime.fromtimestamp(pwd.created_at) if pwd.created_at else ""
-        print(f"""
+        print(
+            f"""
 =================== {pwd.id} ===================
 
 password:     \t{pwd.encrypted_password[:15]}***{pwd.encrypted_password[-15:]}
 domain:       \t{pwd.url}
 description:  \t{pwd.description}
 creation date:\t{created_date.strftime("%Y-%m-%d %H:%M:%S")}
-        """)
+        """
+        )
 
 
 def copy_password(id: str):
