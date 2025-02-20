@@ -235,7 +235,6 @@ def copy_password(id: str):
     cipher = Fernet(settings.SECRET_KEY.encode())
     encrypted_password = base64.b64decode(password.encrypted_password)
     decrypted_password = cipher.decrypt(encrypted_password).decode()
-    logger.debug(f"Decrypted password: {decrypted_password}")
     pyperclip.copy(decrypted_password)
     logger.info("Password copied to clipboard successfully.")
     print("Password copied to clipboard successfully.")
