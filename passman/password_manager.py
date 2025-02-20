@@ -237,6 +237,8 @@ def copy_password(id: str):
     decrypted_password = cipher.decrypt(encrypted_password).decode()
     logger.debug(f"Decrypted password: {decrypted_password}")
     pyperclip.copy(decrypted_password)
+    logger.info("Password copied to clipboard successfully.")
+    print("Password copied to clipboard successfully.")
 
 
 def verify_master_password(master_password: str):
