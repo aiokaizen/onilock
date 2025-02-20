@@ -85,13 +85,17 @@ class LoggingManager:
         return self.logger
 
 
-_log_manager = LoggingManager(default_level=logging.DEBUG)
+_log_manager = LoggingManager(
+    default_level=logging.DEBUG if settings.DEBUG else logging.ERROR
+)
 
 # Add console handler
-_log_manager.add_console_handler(level=logging.DEBUG)
+_log_manager.add_console_handler(
+    level=logging.DEBUG if settings.DEBUG else logging.ERROR
+)
 
 # Add file handler
-logging_level = logging.DEBUG if settings.DEBUG else logging.INFO
+logging_level = logging.DEBUG if settings.DEBUG else logging.ERROR
 _log_manager.add_file_handler(
     filepath=os.path.join(settings.BASE_DIR, "logging", "passman.log"),
     level=logging_level,

@@ -3,7 +3,7 @@ from typing import Optional
 import typer
 from cryptography.fernet import Fernet
 
-from core.password_manager import (
+from passman.password_manager import (
     copy_password,
     initialize,
     list_passwords,
