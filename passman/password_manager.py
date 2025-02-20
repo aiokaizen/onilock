@@ -199,15 +199,15 @@ def list_passwords():
     print(f"Passwords list for {account.name}")
 
     for pwd in account.passwords:
-        created_date = datetime.fromtimestamp(pwd.created_at) if pwd.created_at else ""
+        created_date = datetime.fromtimestamp(pwd.created_at)
         print(
             f"""
 =================== {pwd.id} ===================
 
-password:     \t{pwd.encrypted_password[:15]}***{pwd.encrypted_password[-15:]}
-domain:       \t{pwd.url}
-description:  \t{pwd.description}
-creation date:\t{created_date.strftime("%Y-%m-%d %H:%M:%S")}
+encrypted password: {pwd.encrypted_password[:15]}***{pwd.encrypted_password[-15:]}
+               url: {pwd.url}
+       description: {pwd.description}
+     creation date: {created_date.strftime("%Y-%m-%d %H:%M:%S")}
         """
         )
 
