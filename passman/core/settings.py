@@ -1,47 +1,44 @@
 import os
 from enum import Enum
-from typing import Optional
-from pydantic.fields import Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
 
-
-def get_base_dir():
-    return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from passman.core.utils import get_secret_key, str_to_bool
 
 
 class DBBackEndEnum(Enum):
     JSON = "Json"
-    SQLITE = "SQLite"
-    POSTGRES = "PostgreSQL"
+    SQLITE = "SQLite"  # Not implemented yet
+    POSTGRES = "PostgreSQL"  # Not implemented yet
 
 
-class Settings(BaseSettings):
+class Settings:
     """
     A settings class containing the application configuration.
     """
 
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        # env_prefix="PM_",  # Prefix for env variables identification.
-        extra="ignore",  # Default: "forbid"
-    )
+    def __init__(self) -> None:
+        try:
+            debug = str_to_bool(os.environ.get("DEBUG", "false"))
+            self.DEBUG = debug
+        except ValueError:
+            pass
 
-    DEBUG: bool
-    SECRET_KEY: str = Field(description="Project Secret Key")
-    DB_BACKEND: DBBackEndEnum = DBBackEndEnum.JSON
-    DB_URL: Optional[str] = None
-    DB_NAME: str
-    DB_HOST: Optional[str] = None
-    DB_USER: Optional[str] = None
-    DB_PWD: Optional[str] = None
-    DB_PORT: int = 0
-    BASE_DIR: str = get_base_dir()
-    SETUP_FILEPATH: str = Field(
-        default=(
-            os.path.join(os.path.expanduser("~"), ".passman", "shadow", "setup.json")
+        self.SECRET_KEY = os.environ.get("SECRET_KEY", get_secret_key())
+        self.DB_BACKEND = DBBackEndEnum(os.environ.get("DB_BACKEND", "Json"))
+        self.DB_URL = os.environ.get("DB_URL")
+        self.DB_NAME = os.environ.get("DB_NAME", os.getlogin())
+        self.DB_HOST = os.environ.get("DB_HOST")
+        self.DB_USER = os.environ.get("DB_USER")
+        self.DB_PWD = os.environ.get("DB_PWD")
+
+        try:
+            db_port = int(os.environ.get("DB_PORT", "0"))
+            self.DB_PORT = db_port
+        except ValueError:
+            pass
+
+        self.SETUP_FILEPATH = os.path.join(
+            os.path.expanduser("~"), ".passman", "shadow", "setup.json"
         )
-    )
 
 
 settings = Settings()
