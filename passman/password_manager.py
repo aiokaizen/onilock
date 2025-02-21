@@ -57,7 +57,25 @@ def generate_random_password(
     return "".join(password)
 
 
-def get_config_engine():
+def verify_master_password(master_password: str):
+    """
+    Verify that the provided master password is valid.
+
+    Args:
+        id (str): The target password identifier.
+        master_password (str): The master password.
+    """
+    engine = get_account_engine()
+    data = engine.read()
+    if not data:
+        raise Exception("This database is not initialized.")
+
+    account = Account(**data)
+    hashed_master_password = base64.b64decode(account.master_password)
+    return bcrypt.checkpw(master_password.encode(), hashed_master_password)
+
+
+def get_account_engine():
     """Get user config engine."""
 
     db_manager = DatabaseManager(database_url=settings.SETUP_FILEPATH)
@@ -145,6 +163,7 @@ def initialize(master_password: Optional[str] = None, filepath: Optional[str] = 
 def save_password(
     id: str,
     password: Optional[str] = None,
+    username: Optional[str] = None,
     url: Optional[str] = None,
     description: Optional[str] = None,
 ):
@@ -154,10 +173,11 @@ def save_password(
     Args:
         id (str): An identifier used to retrieve the password.
         password (Optional[str]): The password to encrypt, automatically generated if not provided.
+        username (Optional[str]): The account username
         url (Optional[str]): The url / service where the password is used.
         description (Optional[str]): A password description.
     """
-    engine = get_config_engine()
+    engine = get_account_engine()
     data = engine.read()
     if not data:
         raise Exception("This database is not initialized.")
@@ -179,6 +199,7 @@ def save_password(
     password_model = Password(
         id=id,
         encrypted_password=b64_encrypted_password,
+        username=username or "",
         url=url,
         description=description,
         created_at=int(datetime.now().timestamp()),
@@ -192,17 +213,17 @@ def save_password(
 def list_passwords():
     """List all available passwords."""
 
-    engine = get_config_engine()
+    engine = get_account_engine()
     data = engine.read()
     account = Account(**data)
 
     print(f"Passwords list for {account.name}")
 
-    for pwd in account.passwords:
+    for index, pwd in enumerate(account.passwords):
         created_date = datetime.fromtimestamp(pwd.created_at)
         print(
             f"""
-=================== {pwd.id} ===================
+=================== [{index + 1}] {pwd.id} ===================
 
 encrypted password: {pwd.encrypted_password[:15]}***{pwd.encrypted_password[-15:]}
                url: {pwd.url}
@@ -212,14 +233,14 @@ encrypted password: {pwd.encrypted_password[:15]}***{pwd.encrypted_password[-15:
         )
 
 
-def copy_password(id: str):
+def copy_password(id: str | int):
     """
     Copy the password with the provided ID to the clipboard.
 
     Args:
         id (str): The target password identifier.
     """
-    engine = get_config_engine()
+    engine = get_account_engine()
     data = engine.read()
     if not data:
         raise Exception("This database is not initialized.")
@@ -236,26 +257,8 @@ def copy_password(id: str):
     encrypted_password = base64.b64decode(password.encrypted_password)
     decrypted_password = cipher.decrypt(encrypted_password).decode()
     pyperclip.copy(decrypted_password)
-    logger.info("Password copied to clipboard successfully.")
+    logger.info(f"Password {password.id} copied to clipboard successfully.")
     print("Password copied to clipboard successfully.")
-
-
-def verify_master_password(master_password: str):
-    """
-    Verify that the provided master password is valid.
-
-    Args:
-        id (str): The target password identifier.
-        master_password (str): The master password.
-    """
-    engine = get_config_engine()
-    data = engine.read()
-    if not data:
-        raise Exception("This database is not initialized.")
-
-    account = Account(**data)
-    hashed_master_password = base64.b64decode(account.master_password)
-    return bcrypt.checkpw(master_password.encode(), hashed_master_password)
 
 
 def remove_password(id: str, master_password: str):
@@ -266,7 +269,7 @@ def remove_password(id: str, master_password: str):
         id (str): The target password identifier.
         master_password (str): The master password.
     """
-    engine = get_config_engine()
+    engine = get_account_engine()
     data = engine.read()
     if not data:
         raise Exception("This database is not initialized.")
