@@ -1,8 +1,8 @@
 from threading import Lock
 from typing import Optional
 
-from core.logging_manager import logger
-from db.engines import JsonEngine
+from passman.core.logging_manager import logger
+from passman.db.engines import JsonEngine
 
 
 def create_engine(database_url: str):
@@ -46,4 +46,3 @@ class DatabaseManager:
             id: create_engine(db_url),
         }
         return self._engines[id]
-
