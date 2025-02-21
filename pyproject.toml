@@ -1,6 +1,6 @@
 [project]
 name = "passman"
-version = "1.2.0"
+version = "1.3.0"
 description = "Password Manager"
 authors = [
     {name = "Mouad Kommir",email = "mouad.kommir@payticconnect.com"}
@@ -13,7 +13,8 @@ dependencies = [
     "colorlog (>=6.9.0,<7.0.0)",
     "cryptography (>=44.0.1,<45.0.0)",
     "bcrypt (>=4.2.1,<5.0.0)",
-    "pyperclip (>=1.9.0,<2.0.0)"
+    "pyperclip (>=1.9.0,<2.0.0)",
+    "keyring (>=25.6.0,<26.0.0)"
 ]
 
 [project.scripts]
@@ -26,4 +27,5 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.group.dev.dependencies]
 build = "^1.2.2.post1"
+black = "^25.1.0"
 

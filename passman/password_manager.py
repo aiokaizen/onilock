@@ -6,6 +6,7 @@ import string
 from typing import Optional
 import base64
 
+import typer
 from cryptography.fernet import Fernet
 import pyperclip
 import bcrypt
@@ -125,7 +126,7 @@ def initialize(master_password: Optional[str] = None, filepath: Optional[str] = 
         master_password = generate_random_password(
             length=25, include_special_characters=True
         )
-        print(
+        typer.echo(
             f"Generated password: {master_password}\n"
             "This is the only time this password is visible. Make sure you copy it to a safe place before proceding."
         )
@@ -217,11 +218,11 @@ def list_passwords():
     data = engine.read()
     account = Account(**data)
 
-    print(f"Passwords list for {account.name}")
+    typer.echo(f"Passwords list for {account.name}")
 
     for index, pwd in enumerate(account.passwords):
         created_date = datetime.fromtimestamp(pwd.created_at)
-        print(
+        typer.echo(
             f"""
 =================== [{index + 1}] {pwd.id} ===================
 
@@ -258,16 +259,15 @@ def copy_password(id: str | int):
     decrypted_password = cipher.decrypt(encrypted_password).decode()
     pyperclip.copy(decrypted_password)
     logger.info(f"Password {password.id} copied to clipboard successfully.")
-    print("Password copied to clipboard successfully.")
+    typer.echo("Password copied to clipboard successfully.")
 
 
-def remove_password(id: str, master_password: str):
+def remove_password(id: str):
     """
     Remove a password.
 
     Args:
         id (str): The target password identifier.
-        master_password (str): The master password.
     """
     engine = get_account_engine()
     data = engine.read()
@@ -275,12 +275,6 @@ def remove_password(id: str, master_password: str):
         raise Exception("This database is not initialized.")
 
     account = Account(**data)
-
-    password_verified = verify_master_password(master_password)
-
-    if not password_verified:
-        raise Exception("Incorrect master password.")
-
     password = account.get_password(id)
 
     if not password:
