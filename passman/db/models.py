@@ -1,10 +1,10 @@
-from datetime import datetime
 from typing import List, Optional
 from pydantic import BaseModel, Field
 
 
 class Password(BaseModel):
     id: str = Field(description="Password Identification")
+    username: str = Field(default="", description="Username")
     encrypted_password: str = Field(description="Encrypted Password")
     url: Optional[str] = Field(default=None, description="URL or Service name")
     description: Optional[str] = Field(default=None, description="Description")
@@ -16,7 +16,10 @@ class Account(BaseModel):
     master_password: str = Field(description="Hashed Master Password")
     passwords: List[Password]
 
-    def get_password(self, id: str):
+    def get_password(self, id: str | int):
+        if isinstance(id, int):
+            return self.passwords[id]
+
         for password in self.passwords:
             if password.id == id:
                 return password
