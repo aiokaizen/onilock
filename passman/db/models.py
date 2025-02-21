@@ -2,6 +2,7 @@ from typing import List, Optional
 from pydantic import BaseModel, Field
 
 
+# @TODO : Rename to Account
 class Password(BaseModel):
     id: str = Field(description="Password Identification")
     username: str = Field(default="", description="Username")
@@ -11,6 +12,7 @@ class Password(BaseModel):
     created_at: int = Field(description="Creation date")
 
 
+# @TODO : Rename to Profile
 class Account(BaseModel):
     name: str
     master_password: str = Field(description="Hashed Master Password")
