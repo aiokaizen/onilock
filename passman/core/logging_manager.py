@@ -1,10 +1,14 @@
+from datetime import datetime
 import os
 import logging
 import colorlog
 from logging import StreamHandler
 from logging.handlers import RotatingFileHandler
 from typing import Dict
-from core.settings import settings
+from passman.core.settings import settings
+
+# @TODO: Change logs directory to /var/log/passman
+LOGS_DIR = "/tmp/logs/passman"
 
 
 class LoggingManager:
@@ -24,9 +28,9 @@ class LoggingManager:
         self.logger.setLevel(default_level)
         self.handlers: Dict[str, logging.Handler] = {}
 
-        logs_dir = "logging"
-        if not os.path.exists(logs_dir):
-            os.makedirs(logs_dir)
+        # @TODO: Change logs directory to /var/log/passman
+        if not os.path.exists(LOGS_DIR):
+            os.makedirs(LOGS_DIR)
 
     def add_console_handler(self, level: int = logging.INFO):
         """Add a console (stdout) logging handler."""
@@ -95,9 +99,10 @@ _log_manager.add_console_handler(
 )
 
 # Add file handler
+today = datetime.today().strftime("%Y%m%d")
 logging_level = logging.DEBUG if settings.DEBUG else logging.ERROR
 _log_manager.add_file_handler(
-    filepath=os.path.join(settings.BASE_DIR, "logging", "passman.log"),
+    filepath=os.path.join(LOGS_DIR, f"{today}.log"),
     level=logging_level,
 )
 

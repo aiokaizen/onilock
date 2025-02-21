@@ -1,8 +1,8 @@
 import os
 import json
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
-from core.logging_manager import logger
+from passman.core.logging_manager import logger
 
 
 class Engine:

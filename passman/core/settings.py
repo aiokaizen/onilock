@@ -6,7 +6,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 def get_base_dir():
-    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 class DBBackEndEnum(Enum):
@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     """
     A settings class containing the application configuration.
     """
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -36,9 +37,11 @@ class Settings(BaseSettings):
     DB_PWD: Optional[str] = None
     DB_PORT: int = 0
     BASE_DIR: str = get_base_dir()
-    SETUP_FILEPATH: str = Field(default=(
-        os.path.join(os.path.expanduser("~"), ".passman", "shadow", "setup.json")
-    ))
+    SETUP_FILEPATH: str = Field(
+        default=(
+            os.path.join(os.path.expanduser("~"), ".passman", "shadow", "setup.json")
+        )
+    )
 
 
 settings = Settings()

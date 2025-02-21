@@ -10,10 +10,10 @@ from cryptography.fernet import Fernet
 import pyperclip
 import bcrypt
 
-from core.settings import settings
-from core.logging_manager import logger
-from db import DatabaseManager
-from db.models import Account, Password
+from passman.core.settings import settings
+from passman.core.logging_manager import logger
+from passman.db import DatabaseManager
+from passman.db.models import Account, Password
 
 
 __all__ = [
