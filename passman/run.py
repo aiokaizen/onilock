@@ -33,9 +33,10 @@ def init(
 
 
 @app.command()
-def save_pwd(
+def new(
     id: str,
     password: Optional[str] = None,
+    username: Optional[str] = None,
     url: Optional[str] = None,
     description: Optional[str] = None,
 ):
@@ -45,32 +46,38 @@ def save_pwd(
     Args:
         id (str): An identifier used to retrieve the password.
         password (Optional[str]): The password to encrypt, automatically generated if not provided.
+        username (Optional[str]): The account username
         url (Optional[str]): The url / service where the password is used.
         description (Optional[str]): A password description.
     """
-    return save_password(id, password, url, description)
+    return save_password(id, password, username, url, description)
 
 
 @app.command()
-def list_pwds():
+def accounts():
     """List all available passwords."""
 
     return list_passwords()
 
 
 @app.command()
-def copy_pwd(id: str):
+def copy(id: str):
     """
     Copy the password with the provided ID to the clipboard.
 
     Args:
         id (str): The target password identifier.
     """
-    return copy_password(id)
+    final_id: str | int = id
+    try:
+        final_id = int(final_id) - 1
+    except ValueError:
+        pass
+    return copy_password(final_id)
 
 
 @app.command()
-def rm_pwd(id: str, master_password: str):
+def remove(id: str, master_password: str):
     """
     Remove a password.
 
