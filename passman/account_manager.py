@@ -1,61 +1,25 @@
 from datetime import datetime
 import os
-import secrets
-import random
-import string
 from typing import Optional
 import base64
 
-import typer
 from cryptography.fernet import Fernet
 import pyperclip
 import bcrypt
+import typer
 
 from passman.core.settings import settings
 from passman.core.logging_manager import logger
 from passman.db import DatabaseManager
-from passman.db.models import Account, Password
+from passman.db.models import Profile, Account
 
 
 __all__ = [
     "initialize",
-    "save_password",
-    "copy_password",
-    "generate_random_password",
+    "new_account",
+    "copy_account_password",
+    "remove_account",
 ]
-
-
-def generate_random_password(
-    length: int = 12, include_special_characters: bool = True
-) -> str:
-    """
-    Generate a random password.
-
-    Args:
-        length (int): The length of the generated password
-        include_special_characters (bool): If False, the password will only contain alpha-numeric characters.
-
-    Returns:
-        str : The generated password
-    """
-    logger.debug("Generating random password.")
-    characters = string.ascii_letters + string.digits
-    punctuation = "@$!%*?&_}{()-=+"
-    password = [
-        secrets.choice(string.ascii_lowercase),
-        secrets.choice(string.ascii_uppercase),
-        secrets.choice(string.digits),
-    ]
-    if include_special_characters:
-        password.append(secrets.choice(punctuation))
-        characters += punctuation
-
-    password += [secrets.choice(characters) for _ in range(length)]
-
-    # Shuffle password in-place.
-    random.shuffle(password)
-
-    return "".join(password)
 
 
 def verify_master_password(master_password: str):
@@ -66,27 +30,29 @@ def verify_master_password(master_password: str):
         id (str): The target password identifier.
         master_password (str): The master password.
     """
-    engine = get_account_engine()
+    engine = get_profile_engine()
     data = engine.read()
     if not data:
-        raise Exception("This database is not initialized.")
+        typer.echo(
+            "This database is not initialized. Please use the `init` command to initialize it."
+        )
+        exit(1)
 
-    account = Account(**data)
-    hashed_master_password = base64.b64decode(account.master_password)
+    profile = Profile(**data)
+    hashed_master_password = base64.b64decode(profile.master_password)
     return bcrypt.checkpw(master_password.encode(), hashed_master_password)
 
 
-def get_account_engine():
+def get_profile_engine():
     """Get user config engine."""
 
+    cipher = Fernet(settings.SECRET_KEY.encode())
     db_manager = DatabaseManager(database_url=settings.SETUP_FILEPATH)
     setup_engine = db_manager.get_engine()
     setup_data = setup_engine.read()
     b64encrypted_config_filepath = setup_data[settings.DB_NAME]["filepath"]
-    cipher = Fernet(settings.SECRET_KEY.encode())
     encrypted_filepath = base64.b64decode(b64encrypted_config_filepath)
     config_filepath = cipher.decrypt(encrypted_filepath).decode()
-
     return db_manager.add_engine("data", config_filepath)
 
 
@@ -98,8 +64,8 @@ def initialize(master_password: Optional[str] = None, filepath: Optional[str] = 
         The master password should be very secure and be saved in a safe place.
 
     Args:
-        name (Optional[str]): The account name, if ommitted, it will be taken from env.
         master_password (Optional[str]): The master password used to secure all the other accounts.
+        filepath (Optional[str]): The filepath where the user wants to save their accounts data.
     """
     logger.debug("Initializing database with a master password.")
 
@@ -117,7 +83,8 @@ def initialize(master_password: Optional[str] = None, filepath: Optional[str] = 
     setup_data = setup_engine.read()
 
     if data or name in setup_data:
-        raise Exception("Database already initialized.")
+        typer.echo("This database is already initialized")
+        exit(1)
 
     if not master_password:
         logger.warning(
@@ -136,12 +103,12 @@ def initialize(master_password: Optional[str] = None, filepath: Optional[str] = 
     hashed_master_password = bcrypt.hashpw(master_password.encode(), bcrypt.gensalt())
     b64_hashed_master_password = base64.b64encode(hashed_master_password).decode()
 
-    account = Account(
+    profile = Profile(
         name=name,
         master_password=b64_hashed_master_password,
-        passwords=list(),
+        accounts=list(),
     )
-    engine.write(account.model_dump())
+    engine.write(profile.model_dump())
 
     logger.info("Updating the current setup file.")
 
@@ -161,29 +128,32 @@ def initialize(master_password: Optional[str] = None, filepath: Optional[str] = 
     return master_password
 
 
-def save_password(
-    id: str,
+def new_account(
+    name: str,
     password: Optional[str] = None,
     username: Optional[str] = None,
     url: Optional[str] = None,
     description: Optional[str] = None,
 ):
     """
-    Encrypt and save a password.
+    Register a new account.
 
     Args:
-        id (str): An identifier used to retrieve the password.
+        name (str): An identifier used to retrieve the password (e.g. github).
         password (Optional[str]): The password to encrypt, automatically generated if not provided.
         username (Optional[str]): The account username
         url (Optional[str]): The url / service where the password is used.
         description (Optional[str]): A password description.
     """
-    engine = get_account_engine()
+    engine = get_profile_engine()
     data = engine.read()
     if not data:
-        raise Exception("This database is not initialized.")
+        typer.echo(
+            "This database is not initialized. Please use the `init` command to initialize it."
+        )
+        exit(1)
 
-    account = Account(**data)
+    profile = Profile(**data)
 
     if not password:
         logger.warning("Password not provided, generating it randomly.")
@@ -197,30 +167,30 @@ def save_password(
     logger.debug(f"Encrypted password: {encrypted_password.decode()}")
     b64_encrypted_password = base64.b64encode(encrypted_password).decode()
     logger.debug(f"B64 Encrypted password: {b64_encrypted_password}")
-    password_model = Password(
-        id=id,
+    password_model = Account(
+        id=name,
         encrypted_password=b64_encrypted_password,
         username=username or "",
         url=url,
         description=description,
         created_at=int(datetime.now().timestamp()),
     )
-    account.passwords.append(password_model)
-    engine.write(account.model_dump())
+    profile.accounts.append(password_model)
+    engine.write(profile.model_dump())
     logger.info("Password saved successfully.")
     return password
 
 
-def list_passwords():
+def list_accounts():
     """List all available passwords."""
 
-    engine = get_account_engine()
+    engine = get_profile_engine()
     data = engine.read()
-    account = Account(**data)
+    profile = Profile(**data)
 
-    typer.echo(f"Passwords list for {account.name}")
+    typer.echo(f"Accounts list for {profile.name}")
 
-    for index, pwd in enumerate(account.passwords):
+    for index, pwd in enumerate(profile.accounts):
         created_date = datetime.fromtimestamp(pwd.created_at)
         typer.echo(
             f"""
@@ -234,51 +204,60 @@ encrypted password: {pwd.encrypted_password[:15]}***{pwd.encrypted_password[-15:
         )
 
 
-def copy_password(id: str | int):
+def copy_account_password(id: str | int):
     """
-    Copy the password with the provided ID to the clipboard.
+    Copy the password of the account with the provided ID to the clipboard.
 
     Args:
         id (str): The target password identifier.
     """
-    engine = get_account_engine()
+    engine = get_profile_engine()
     data = engine.read()
     if not data:
-        raise Exception("This database is not initialized.")
+        typer.echo(
+            "This database is not initialized. Please use the `init` command to initialize it."
+        )
+        exit(1)
 
-    account = Account(**data)
+    profile = Profile(**data)
 
-    password = account.get_password(id)
-    if not password:
-        raise Exception("Password not found.")
+    account = profile.get_account(id)
+    if not account:
+        typer.echo("Invalid account name or index", err=True, color=True)
+        exit(1)
 
-    logger.debug(f"Raw password: {password.encrypted_password}")
+    logger.debug(f"Raw password: {account.encrypted_password}")
     logger.debug("Decrypting the password.")
     cipher = Fernet(settings.SECRET_KEY.encode())
-    encrypted_password = base64.b64decode(password.encrypted_password)
+    encrypted_password = base64.b64decode(account.encrypted_password)
     decrypted_password = cipher.decrypt(encrypted_password).decode()
     pyperclip.copy(decrypted_password)
-    logger.info(f"Password {password.id} copied to clipboard successfully.")
+    logger.info(f"Password {account.id} copied to clipboard successfully.")
     typer.echo("Password copied to clipboard successfully.")
 
 
-def remove_password(id: str):
+def remove_account(name: str):
     """
     Remove a password.
 
     Args:
-        id (str): The target password identifier.
+        name (str): The target account name.
     """
-    engine = get_account_engine()
+    engine = get_profile_engine()
     data = engine.read()
     if not data:
-        raise Exception("This database is not initialized.")
+        typer.echo(
+            "This database is not initialized. Please use the `init` command to initialize it."
+        )
+        exit(1)
 
-    account = Account(**data)
-    password = account.get_password(id)
+    profile = Profile(**data)
 
-    if not password:
-        raise Exception("Password ID does not exist.")
+    account = profile.get_account(name)
 
-    account.remove_password(id)
-    engine.write(account.model_dump())
+    if not account:
+        typer.echo("Invalid account name", err=True, color=True)
+        exit(1)
+
+    profile.remove_account(name)
+    engine.write(profile.model_dump())

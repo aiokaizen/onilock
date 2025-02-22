@@ -2,12 +2,13 @@ from typing import Optional
 
 import typer
 
-from passman.password_manager import (
-    copy_password,
+from passman.core.utils import generate_random_password
+from passman.account_manager import (
+    copy_account_password,
     initialize,
-    list_passwords,
-    remove_password,
-    save_password,
+    list_accounts,
+    remove_account,
+    new_account,
 )
 
 app = typer.Typer()
@@ -74,20 +75,20 @@ def new(
         url (Optional[str]): The url / service where the password is used.
         description (Optional[str]): A password description.
     """
-    return save_password(name, password, username, url, description)
+    return new_account(name, password, username, url, description)
 
 
-@app.command()
+@app.command("list")
 def accounts():
     """List all available accounts."""
 
-    return list_passwords()
+    return list_accounts()
 
 
 @app.command()
 def copy(name: str = typer.Option(..., prompt="Account name or index")):
     """
-    Copy the password of the account with the provided ID or index to the clipboard.
+    Copy the password of the account with the provided name or index to the clipboard.
 
     N.B: You can find the index next to an account's name in the accounts list.
 
@@ -99,7 +100,7 @@ def copy(name: str = typer.Option(..., prompt="Account name or index")):
         account_id = int(account_id) - 1
     except ValueError:
         pass
-    return copy_password(account_id)
+    return copy_account_password(account_id)
 
 
 @app.command()
@@ -107,17 +108,24 @@ def remove(
     name: str = typer.Option(..., prompt="Account name"),
 ):
     """
-    Remove a password.
+    Remove an account.
 
     Args:
         name (str): The target password identifier.
-        master_password (str): The master password.
     """
-    confirm = typer.confirm(f"Are you sure you want to delete {name} account?")
-    if confirm:
-        return remove_password(name)
-    else:
-        typer.echo("Operation canceled.")
+    return remove_account(name)
+
+
+@app.command()
+def generate(
+    len: int = typer.Option(8, prompt="Enter password length"),
+    special_chars: bool = typer.Option(True, prompt="Include special characters?"),
+):
+    """
+    Generate and returns a random password
+    """
+    random_password = generate_random_password(len, special_chars)
+    typer.echo(random_password)
 
 
 if __name__ == "__main__":

@@ -1,4 +1,7 @@
 import os
+import string
+import secrets
+import random
 import uuid
 
 from cryptography.fernet import Fernet
@@ -7,6 +10,38 @@ import keyring
 
 def get_base_dir():
     return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+def generate_random_password(
+    length: int = 12, include_special_characters: bool = True
+) -> str:
+    """
+    Generate a random and secure password.
+
+    Args:
+        length (int): The length of the generated password
+        include_special_characters (bool): If False, the password will only contain alpha-numeric characters.
+
+    Returns:
+        str : The generated password
+    """
+    characters = string.ascii_letters + string.digits
+    punctuation = "@$!%*?&_}{()-=+"
+    password = [
+        secrets.choice(string.ascii_lowercase),
+        secrets.choice(string.ascii_uppercase),
+        secrets.choice(string.digits),
+    ]
+    if include_special_characters:
+        password.append(secrets.choice(punctuation))
+        characters += punctuation
+
+    password += [secrets.choice(characters) for _ in range(length)]
+
+    # Shuffle password in-place.
+    random.shuffle(password)
+
+    return "".join(password)
 
 
 def get_secret_key() -> str:

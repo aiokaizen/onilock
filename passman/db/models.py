@@ -1,9 +1,11 @@
 from typing import List, Optional
 from pydantic import BaseModel, Field
 
+from passman.core.logging_manager import logger
+
 
 # @TODO : Rename to Account
-class Password(BaseModel):
+class Account(BaseModel):
     id: str = Field(description="Password Identification")
     username: str = Field(default="", description="Username")
     encrypted_password: str = Field(description="Encrypted Password")
@@ -12,23 +14,26 @@ class Password(BaseModel):
     created_at: int = Field(description="Creation date")
 
 
-# @TODO : Rename to Profile
-class Account(BaseModel):
+class Profile(BaseModel):
     name: str
     master_password: str = Field(description="Hashed Master Password")
-    passwords: List[Password]
+    accounts: List[Account]
 
-    def get_password(self, id: str | int):
+    def get_account(self, id: str | int) -> Account | None:
         if isinstance(id, int):
-            return self.passwords[id]
+            try:
+                return self.accounts[id]
+            except IndexError:
+                logger.error("Invalid account index")
+                return None
 
-        for password in self.passwords:
-            if password.id == id:
-                return password
+        for account in self.accounts:
+            if account.id == id:
+                return account
         return None
 
-    def remove_password(self, id: str):
-        for index, password in enumerate(self.passwords):
+    def remove_account(self, id: str):
+        for index, password in enumerate(self.accounts):
             if password.id == id:
-                del self.passwords[index]
+                del self.accounts[index]
                 break
