@@ -12,31 +12,20 @@ OniLock is a command-line password manager that allows you to securely store, re
 - **Shell completion support** for faster command-line usage
 
 ## 🛠 Installation
+
 OniLock is best installed using `pipx` to keep it isolated:
 
-1. Make sure you installed dev dependancies
-
-2. cd into the root directory of the project
-```sh
-cd path/to/onilock
-```
-
-3. Run the following command to create the package:
-```sh
-python -m build
-```
-
-4. Install pipx
+1. **Install pipx**
 ```sh
 sudo apt install pipx
 ```
 
-5. Install the package systemwide
+2. **Install OniLock systemwide**
 
-Make sure you don't have any active virtual environments before executing this command.
+N.B. Make sure you don't have any active virtual environments before executing this command.
 
 ```sh
-pipx install dist/onilock-<current-version>-py3-none-any.whl
+pipx install onilock
 ```
 
 ## 📌 Usage
