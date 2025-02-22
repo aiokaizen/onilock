@@ -90,5 +90,5 @@ Contributions are welcome! Feel free to submit issues and pull requests.
 
 ## 📧 Contact
 Author: Mouad Kommir  
-Email: mouad.kommir@payticconnect.com
+Email: mouadkommir@gmail.com
 
