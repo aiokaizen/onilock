@@ -1,5 +1,8 @@
 # Version 1
 
+## v1.3.2
+- Prepare for publishing to PyPi
+
 ## v1.3.1
 - Renamed Account to Profile
 - Renamed Password to Account

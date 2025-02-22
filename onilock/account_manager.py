@@ -8,10 +8,11 @@ import pyperclip
 import bcrypt
 import typer
 
-from passman.core.settings import settings
-from passman.core.logging_manager import logger
-from passman.db import DatabaseManager
-from passman.db.models import Profile, Account
+from onilock.core.settings import settings
+from onilock.core.logging_manager import logger
+from onilock.core.utils import generate_random_password
+from onilock.db import DatabaseManager
+from onilock.db.models import Profile, Account
 
 
 __all__ = [
@@ -73,7 +74,7 @@ def initialize(master_password: Optional[str] = None, filepath: Optional[str] = 
 
     if not filepath:
         filepath = os.path.join(
-            os.path.expanduser("~"), ".passman", "shadow", f"{name}.json"
+            os.path.expanduser("~"), ".onilock", "shadow", f"{name}.json"
         )
 
     db_manager = DatabaseManager(database_url=filepath)
@@ -234,6 +235,8 @@ def copy_account_password(id: str | int):
     pyperclip.copy(decrypted_password)
     logger.info(f"Password {account.id} copied to clipboard successfully.")
     typer.echo("Password copied to clipboard successfully.")
+
+    # @TODO: Delete password from the clipboard after a short period of time (e.g. 1m).
 
 
 def remove_account(name: str):

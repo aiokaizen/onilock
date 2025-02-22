@@ -5,10 +5,10 @@ import colorlog
 from logging import StreamHandler
 from logging.handlers import RotatingFileHandler
 from typing import Dict
-from passman.core.settings import settings
+from onilock.core.settings import settings
 
-# @TODO: Change logs directory to /var/log/passman
-LOGS_DIR = "/tmp/logs/passman"
+# @TODO: Change logs directory to /var/log/onilock
+LOGS_DIR = "/tmp/logs/onilock"
 
 
 class LoggingManager:
@@ -28,7 +28,7 @@ class LoggingManager:
         self.logger.setLevel(default_level)
         self.handlers: Dict[str, logging.Handler] = {}
 
-        # @TODO: Change logs directory to /var/log/passman
+        # @TODO: Change logs directory to /var/log/onilock
         if not os.path.exists(LOGS_DIR):
             os.makedirs(LOGS_DIR)
 
