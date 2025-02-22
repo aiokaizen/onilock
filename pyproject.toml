@@ -1,9 +1,9 @@
 [project]
 name = "onilock"
-version = "1.3.2"
+version = "1.4.0"
 description = "Password Manager CLI"
 authors = [
-    { name = "Mouad Kommir", email = "mouad.kommir@payticconnect.com" }
+    { name = "Mouad Kommir", email = "mouadkommir@gmail.com" }
 ]
 readme = "README.md"
 requires-python = ">=3.10"
