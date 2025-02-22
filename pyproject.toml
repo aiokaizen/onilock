@@ -1,6 +1,6 @@
 [project]
 name = "onilock"
-version = "1.4.0"
+version = "1.4.1"
 description = "Password Manager CLI"
 authors = [
     { name = "Mouad Kommir", email = "mouadkommir@gmail.com" }
@@ -40,9 +40,6 @@ onilock = "onilock.run:app"
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
-# [build-system]
-# requires = ["hatchling"]
-# build-backend = "hatchling.build"
 
 [tool.poetry.group.dev.dependencies]
 build = "^1.2.2.post1"
