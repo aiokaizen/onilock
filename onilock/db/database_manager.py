@@ -1,8 +1,8 @@
 from threading import Lock
 from typing import Optional
 
-from passman.core.logging_manager import logger
-from passman.db.engines import JsonEngine
+from onilock.core.logging_manager import logger
+from onilock.db.engines import JsonEngine
 
 
 def create_engine(database_url: str):
