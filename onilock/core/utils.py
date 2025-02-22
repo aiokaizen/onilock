@@ -51,13 +51,13 @@ def get_secret_key() -> str:
 
     # Retrieve key securely
     key_name = str(uuid.uuid5(uuid.NAMESPACE_DNS, os.getlogin()))
-    stored_key = keyring.get_password("passman", key_name)
+    stored_key = keyring.get_password("onilock", key_name)
     if stored_key:
         return stored_key
 
     # Generate and store the key securely
     secret_key = Fernet.generate_key()
-    keyring.set_password("passman", key_name, secret_key.decode())
+    keyring.set_password("onilock", key_name, secret_key.decode())
 
     return secret_key.decode()
 

@@ -1,7 +1,7 @@
 import os
 from enum import Enum
 
-from passman.core.utils import get_secret_key, str_to_bool
+from onilock.core.utils import get_secret_key, str_to_bool
 
 
 class DBBackEndEnum(Enum):
@@ -37,7 +37,7 @@ class Settings:
             pass
 
         self.SETUP_FILEPATH = os.path.join(
-            os.path.expanduser("~"), ".passman", "shadow", "setup.json"
+            os.path.expanduser("~"), ".onilock", "shadow", "setup.json"
         )
 
 

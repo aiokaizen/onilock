@@ -2,7 +2,7 @@ import os
 import json
 from typing import Any, Dict
 
-from passman.core.logging_manager import logger
+from onilock.core.logging_manager import logger
 
 
 class Engine:

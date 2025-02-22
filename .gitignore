@@ -1,5 +1,4 @@
 .env
 db.json
 __pycache__
-logging
 dist

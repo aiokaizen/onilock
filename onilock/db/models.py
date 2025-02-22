@@ -1,7 +1,7 @@
 from typing import List, Optional
 from pydantic import BaseModel, Field
 
-from passman.core.logging_manager import logger
+from onilock.core.logging_manager import logger
 
 
 # @TODO : Rename to Account
