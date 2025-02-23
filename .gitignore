@@ -1,5 +1,5 @@
 .env
-db.json
 .mypy_cache
 __pycache__
 dist
+*.tmp
