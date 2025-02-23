@@ -1,4 +1,6 @@
 from datetime import datetime
+import threading
+import multiprocessing
 import os
 from typing import Optional
 import base64
@@ -10,7 +12,7 @@ import typer
 
 from onilock.core.settings import settings
 from onilock.core.logging_manager import logger
-from onilock.core.utils import generate_random_password
+from onilock.core.utils import clear_clipboard_after_delay, generate_random_password
 from onilock.db import DatabaseManager
 from onilock.db.models import Profile, Account
 
@@ -74,7 +76,7 @@ def initialize(master_password: Optional[str] = None, filepath: Optional[str] = 
 
     if not filepath:
         filepath = os.path.join(
-            os.path.expanduser("~"), ".onilock", "shadow", f"{name}.json"
+            os.path.expanduser("~"), ".onilock", "vault", f"{name}.json"
         )
 
     db_manager = DatabaseManager(database_url=filepath)
@@ -236,7 +238,16 @@ def copy_account_password(id: str | int):
     logger.info(f"Password {account.id} copied to clipboard successfully.")
     typer.echo("Password copied to clipboard successfully.")
 
-    # @TODO: Delete password from the clipboard after a short period of time (e.g. 1m).
+    logger.debug("Password will be cleared in 25 seconds.")
+
+    process = multiprocessing.Process(
+        target=clear_clipboard_after_delay,
+        args=(decrypted_password, 10),
+    )
+    process.start()
+
+    # Immediately exit the main process to allow it to terminate while the child process runs
+    os._exit(0)
 
 
 def remove_account(name: str):
