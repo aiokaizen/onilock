@@ -1,5 +1,9 @@
 # Version 1
 
+## v1.5.0
+- Rename shadow to vault
+- Clear clipboard after 25 seconds if it still contains the password.
+
 ## v1.3.2
 - Prepare for publishing to PyPi
 

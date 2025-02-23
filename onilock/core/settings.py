@@ -37,7 +37,7 @@ class Settings:
             pass
 
         self.SETUP_FILEPATH = os.path.join(
-            os.path.expanduser("~"), ".onilock", "shadow", "setup.json"
+            os.path.expanduser("~"), ".onilock", "vault", "setup.json"
         )
 
 

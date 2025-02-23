@@ -1,4 +1,5 @@
 import os
+import time
 import string
 import secrets
 import random
@@ -6,10 +7,19 @@ import uuid
 
 from cryptography.fernet import Fernet
 import keyring
+import pyperclip
 
 
 def get_base_dir():
     return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+def clear_clipboard_after_delay(content: str, delay=60):
+    """Clears the clipboard after a delay if it still contains the given content."""
+    time.sleep(delay)
+    cb_content = pyperclip.paste()
+    if cb_content == content:  # Check if clipboard still contains the password
+        pyperclip.copy("")  # Clear the clipboard
 
 
 def generate_random_password(
