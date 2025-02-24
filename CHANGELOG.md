@@ -1,3 +1,8 @@
+# Version 2
+- Implement more structured and mature code base.
+- Provide support for different operating systems (Linux, IOS, Windows)
+
+
 # Version 1
 
 ## v1.5.4
