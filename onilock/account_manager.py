@@ -12,7 +12,14 @@ import typer
 
 from onilock.core.settings import settings
 from onilock.core.logging_manager import logger
-from onilock.core.utils import clear_clipboard_after_delay, generate_random_password
+from onilock.core.utils import (
+    clear_clipboard_after_delay,
+    delete_passphrase_keyring,
+    delete_pgp_key,
+    delete_secret_key_keyring,
+    generate_random_password,
+    get_passphrase,
+)
 from onilock.db import DatabaseManager
 from onilock.db.models import Profile, Account
 
@@ -22,6 +29,7 @@ __all__ = [
     "new_account",
     "copy_account_password",
     "remove_account",
+    "delete_profile",
 ]
 
 
@@ -277,3 +285,46 @@ def remove_account(name: str):
 
     profile.remove_account(name)
     engine.write(profile.model_dump())
+
+
+def delete_profile(master_password: str):
+    """
+    Delete all profile accounts.
+
+    Args:
+        master_password (str): Profile master password.
+    """
+    cipher = Fernet(settings.SECRET_KEY.encode())
+    db_manager = DatabaseManager(database_url=settings.SETUP_FILEPATH)
+    setup_engine = db_manager.get_engine()
+    setup_data = setup_engine.read()
+    b64encrypted_config_filepath = setup_data[settings.DB_NAME]["filepath"]
+    encrypted_filepath = base64.b64decode(b64encrypted_config_filepath)
+    config_filepath = cipher.decrypt(encrypted_filepath).decode()
+
+    master_password_match = verify_master_password(master_password)
+    if not master_password_match:
+        typer.echo("Invalid master password!")
+        exit(1)
+
+    # Delete profile data
+    if os.path.exists(config_filepath):
+        os.remove(config_filepath)
+
+    # Delete meta data file
+    if os.path.exists(settings.SETUP_FILEPATH):
+        os.remove(settings.SETUP_FILEPATH)
+
+    # Get passphrase before deleting the keyring
+    passphrase = get_passphrase()
+
+    # Delete keyrings
+    delete_secret_key_keyring()
+    delete_passphrase_keyring()
+
+    # Delete PGP key
+    delete_pgp_key(
+        passphrase=passphrase,
+        gpg_home=settings.GPG_HOME,
+        real_name=settings.PGP_REAL_NAME,
+    )

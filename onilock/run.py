@@ -5,6 +5,7 @@ import typer
 from onilock.core.utils import generate_random_password
 from onilock.account_manager import (
     copy_account_password,
+    delete_profile,
     initialize,
     list_accounts,
     remove_account,
@@ -31,7 +32,7 @@ def init(
     """
 
     if not master_password:
-        typer.echo("\nEnter your Master Password:")
+        typer.echo("\n\nEnter your Master Password:")
         typer.echo(
             "* Ensure that the password is strong and hidden safely.\n"
             "Leave empty to automatically generate a secure master password."
@@ -39,7 +40,7 @@ def init(
         master_password = typer.prompt("> ", default="", hide_input=True)
 
     if not filepath:
-        typer.echo("\nEnter configuration filepath:")
+        typer.echo("\n\nEnter configuration filepath:")
         typer.echo(
             "* Where you want your configuration file stored "
             "(Choose a hidden place to keep stalkers away).\n"
@@ -126,6 +127,34 @@ def generate(
     """
     random_password = generate_random_password(len, special_chars)
     typer.echo(random_password)
+
+
+@app.command("clear")
+def clear_user_data(
+    master_password: str = typer.Option(
+        prompt="Enter Account's master password.",
+        hide_input=True,
+    ),
+):
+    """
+    Delete all profile accounts.
+
+    Args:
+        master_password (str): Profile master password.
+    """
+    return delete_profile(master_password)
+
+
+@app.command()
+def version():
+    """Print the current version of onilock and exit."""
+    with open("pyproject.toml", "r") as f:
+        while True:
+            line = f.readline()
+            if line.startswith("version"):
+                version = line.split('"')[1]
+                typer.echo(f"OniLock {version}")
+                return
 
 
 if __name__ == "__main__":
