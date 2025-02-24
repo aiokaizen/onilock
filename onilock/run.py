@@ -1,4 +1,5 @@
 from typing import Optional
+import importlib.metadata
 
 import typer
 
@@ -148,13 +149,8 @@ def clear_user_data(
 @app.command()
 def version():
     """Print the current version of onilock and exit."""
-    with open("pyproject.toml", "r") as f:
-        while True:
-            line = f.readline()
-            if line.startswith("version"):
-                version = line.split('"')[1]
-                typer.echo(f"OniLock {version}")
-                return
+    v = importlib.metadata.version("onilock")
+    typer.echo(f"OniLock {v}")
 
 
 if __name__ == "__main__":
