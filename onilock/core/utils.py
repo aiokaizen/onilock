@@ -62,10 +62,13 @@ def key_exists(
 
 
 def get_key_info(
-    self, real_name: Optional[str] = None, key_id: Optional[str] = None
+    gpg_home: Optional[str] = None,
+    real_name: Optional[str] = None,
+    key_id: Optional[str] = None,
 ) -> dict:
     """Get key details if exists in keyring."""
-    keys = self.gpg.list_keys()
+    gpg = gnupg.GPG(gnupghome=gpg_home)
+    keys = gpg.list_keys()
 
     for key in keys:
         uids = key.get("uids", [])
@@ -78,6 +81,29 @@ def get_key_info(
                 return key
 
     return None
+
+
+def delete_pgp_key(
+    *,
+    passphrase: str,
+    gpg_home: Optional[str] = None,
+    real_name: Optional[str] = None,
+    key_id: Optional[str] = None,
+):
+    gpg = gnupg.GPG(gnupghome=gpg_home)
+    key_info = get_key_info(gpg_home, real_name, key_id)
+    print("KEY INFO:", key_info)
+    fingerprint = key_info["fingerprint"]
+
+    # Delete the secret key first
+    gpg.delete_keys(
+        fingerprint,
+        secret=True,
+        passphrase=passphrase,
+    )
+
+    # Then delete the public key
+    gpg.delete_keys(fingerprint)
 
 
 def generate_random_password(
@@ -146,6 +172,16 @@ def get_passphrase() -> str:
     keyring.set_password("onilock", key_name, secret_key)
 
     return secret_key
+
+
+def delete_secret_key_keyring():
+    key_name = str(uuid.uuid5(uuid.NAMESPACE_DNS, os.getlogin()))
+    keyring.delete_password("onilock", key_name)
+
+
+def delete_passphrase_keyring():
+    key_name = str(uuid.uuid5(uuid.NAMESPACE_DNS, os.getlogin() + "_oni"))
+    keyring.delete_password("onilock", key_name)
 
 
 def str_to_bool(s: str) -> bool:
