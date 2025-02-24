@@ -83,10 +83,38 @@ onilock --install-completion
 ```
 
 ## 📜 License
-OniLock is open-source and licensed under the MIT License.
+OniLock is open-source and licensed under the Apache 2.0 License.
 
 ## 🤝 Contributing
 Contributions are welcome! Feel free to submit issues and pull requests.
+
+## 🤝 Changelog
+### v1.5.0
+- Rename shadow to vault
+- Clear clipboard after 25 seconds if it still contains the password.
+- Encrypt json files using PGP key instead of storing them as raw json file.
+- Detect file corruption and manipulation using checksums
+
+### v1.4.0
+- Publish the project under the Apache 2.0 license
+- Multiple refactoring
+- Big upgrade to README.md file.
+
+### v1.3.2
+- Prepare for publishing to PyPi
+
+### v1.3.1
+- Renamed Account to Profile
+- Renamed Password to Account
+- Renamed the `accounts` command to `list`
+- Remove exceptions and replace them with meaningful messages.
+
+### v1.3.0
+- Removed .env support
+- Implement keyring secret storage.
+- Introduce prompts to facilitate user input
+
+View more changelog history on `CHANGELOG.md` file.
 
 ## 📧 Contact
 Author: Mouad Kommir  

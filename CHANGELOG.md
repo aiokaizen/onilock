@@ -6,6 +6,11 @@
 - Encrypt json files using PGP key instead of storing them as raw json file.
 - Detect file corruption and manipulation using checksums
 
+## v1.4.0
+- Publish the project under the Apache 2.0 license
+- Multiple refactoring
+- Big upgrade to README.md file.
+
 ## v1.3.2
 - Prepare for publishing to PyPi
 
