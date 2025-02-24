@@ -1,6 +1,7 @@
 # Version 2
 - Implement more structured and mature code base.
 - Provide support for different operating systems (Linux, IOS, Windows)
+- Provide nicer design and appealing CLI menus
 
 
 # Version 1
