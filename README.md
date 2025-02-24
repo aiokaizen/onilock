@@ -88,7 +88,7 @@ OniLock is open-source and licensed under the Apache 2.0 License.
 ## 🤝 Contributing
 Contributions are welcome! Feel free to submit issues and pull requests.
 
-## 🤝 Changelog
+## 📝 Changelog
 ### v1.5.0
 - Rename shadow to vault
 - Clear clipboard after 25 seconds if it still contains the password.
