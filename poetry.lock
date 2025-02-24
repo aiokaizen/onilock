@@ -974,6 +974,18 @@ files = [
 cli = ["click (>=5.0)"]
 
 [[package]]
+name = "python-gnupg"
+version = "0.5.4"
+description = "A wrapper for the Gnu Privacy Guard (GPG or GnuPG)"
+optional = false
+python-versions = "*"
+groups = ["main"]
+files = [
+    {file = "python-gnupg-0.5.4.tar.gz", hash = "sha256:f2fdb5fb29615c77c2743e1cb3d9314353a6e87b10c37d238d91ae1c6feae086"},
+    {file = "python_gnupg-0.5.4-py2.py3-none-any.whl", hash = "sha256:40ce25cde9df29af91fe931ce9df3ce544e14a37f62b13ca878c897217b2de6c"},
+]
+
+[[package]]
 name = "pywin32-ctypes"
 version = "0.2.3"
 description = "A (partial) reimplementation of pywin32 using ctypes/cffi"
@@ -1249,4 +1261,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.10"
-content-hash = "a0f2f9743d1f25c6158a83eaa42a4f06ab5a4bfc190b3d591d6daeec3de3f57e"
+content-hash = "df4f96effcb246ce0c6172ffd1b69298cd31cc742e0f4e1646f3f3ab151206a7"

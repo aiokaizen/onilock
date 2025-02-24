@@ -1,5 +1,5 @@
 from datetime import datetime
-import threading
+import uuid
 import multiprocessing
 import os
 from typing import Optional
@@ -75,8 +75,9 @@ def initialize(master_password: Optional[str] = None, filepath: Optional[str] = 
     name = settings.DB_NAME
 
     if not filepath:
+        filename = str(uuid.uuid5(uuid.NAMESPACE_DNS, os.getlogin()))
         filepath = os.path.join(
-            os.path.expanduser("~"), ".onilock", "vault", f"{name}.json"
+            os.path.expanduser("~"), ".onilock", "vault", f"{filename}.oni"
         )
 
     db_manager = DatabaseManager(database_url=filepath)
@@ -199,11 +200,12 @@ def list_accounts():
             f"""
 =================== [{index + 1}] {pwd.id} ===================
 
-encrypted password: {pwd.encrypted_password[:15]}***{pwd.encrypted_password[-15:]}
+          username: {pwd.username}
+          password: {pwd.encrypted_password[:15]}***{pwd.encrypted_password[-15:]}
                url: {pwd.url}
        description: {pwd.description}
      creation date: {created_date.strftime("%Y-%m-%d %H:%M:%S")}
-        """
+            """
         )
 
 

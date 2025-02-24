@@ -3,6 +3,8 @@
 ## v1.5.0
 - Rename shadow to vault
 - Clear clipboard after 25 seconds if it still contains the password.
+- Encrypt json files using PGP key instead of storing them as raw json file.
+- Detect file corruption and manipulation using checksums
 
 ## v1.3.2
 - Prepare for publishing to PyPi
