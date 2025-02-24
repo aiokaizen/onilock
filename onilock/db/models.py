@@ -28,12 +28,12 @@ class Profile(BaseModel):
                 return None
 
         for account in self.accounts:
-            if account.id == id:
+            if account.id.lower() == id.lower():
                 return account
         return None
 
     def remove_account(self, id: str):
         for index, password in enumerate(self.accounts):
-            if password.id == id:
+            if password.id.lower() == id.lower():
                 del self.accounts[index]
                 break

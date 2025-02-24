@@ -1,5 +1,16 @@
 # Version 1
 
+## v1.5.4
+- Update `version` command
+- Ignore case for `delete` and `copy` commands
+- Detect file corruption and manipulation using checksums
+
+## v1.5.3
+- Introduce `clear` command
+
+## v1.5.2
+- Introduce `version` command
+
 ## v1.5.0
 - Rename shadow to vault
 - Clear clipboard after 25 seconds if it still contains the password.
