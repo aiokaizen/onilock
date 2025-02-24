@@ -12,10 +12,12 @@ import typer
 
 from onilock.core.settings import settings
 from onilock.core.logging_manager import logger
+from onilock.core.gpg import (
+    delete_pgp_key,
+)
 from onilock.core.utils import (
     clear_clipboard_after_delay,
     delete_passphrase_keyring,
-    delete_pgp_key,
     delete_secret_key_keyring,
     generate_random_password,
     get_passphrase,

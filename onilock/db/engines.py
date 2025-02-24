@@ -7,7 +7,7 @@ import gnupg
 
 from onilock.core.settings import settings
 from onilock.core.logging_manager import logger
-from onilock.core.utils import generate_pgp_key, key_exists
+from onilock.core.gpg import generate_pgp_key, pgp_key_exists
 
 
 class Engine:
@@ -65,7 +65,7 @@ class EncryptedJsonEngine(JsonEngine):
         self.encryption_key = encryption_key  # Recipient key fingerprint/ID
         self.passphrase = passphrase  # Passphrase for private key
 
-        key_generated = key_exists(
+        key_generated = pgp_key_exists(
             gpg_home=gpg_home,
             real_name=encryption_key,
         )
@@ -74,7 +74,7 @@ class EncryptedJsonEngine(JsonEngine):
             generate_pgp_key(
                 gpg_home=gpg_home,
                 name=encryption_key,
-                email=email or DEFAULT_PGP_KEY_EMAIL,
+                email=email,
                 passphrase=self.passphrase,
             )
 
