@@ -1,5 +1,8 @@
 # Version 1
 
+## v1.5.5
+- Update license
+
 ## v1.5.4
 - Update `version` command
 - Ignore case for `delete` and `copy` commands
