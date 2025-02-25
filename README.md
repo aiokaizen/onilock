@@ -122,15 +122,15 @@ Contributions are welcome! Feel free to submit issues and pull requests.
 
 ## 📝 Changelog
 
-## v1.5.4
+### v1.5.4
 - Update `version` command
 - Ignore case for `delete` and `copy` commands
 - Detect file corruption and manipulation using checksums
 
-## v1.5.3
+### v1.5.3
 - Introduce `clear` command
 
-## v1.5.2
+### v1.5.2
 - Introduce `version` command
 
 ### v1.5.0
