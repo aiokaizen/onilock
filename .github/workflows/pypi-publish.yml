@@ -44,6 +44,10 @@ jobs:
           name: release-dists
           path: dist/
 
+      - name: Attach distributions to GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: dist/*
   pypi-publish:
     runs-on: ubuntu-latest
     needs:

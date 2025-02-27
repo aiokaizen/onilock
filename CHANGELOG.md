@@ -2,6 +2,7 @@
 
 ## v1.5.5
 - Update license
+- Automate publishing to pypi using Github Actions
 
 ## v1.5.4
 - Update `version` command
