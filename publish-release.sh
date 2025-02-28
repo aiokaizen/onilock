@@ -1,5 +1,7 @@
+# Version: 1.0.0
+# Author : Mouad Kommir <mouadkommir@gmail.com>
 
-# Get version
+# Get release version
 RELEASE=$(grep '^version' pyproject.toml | sed -E 's/version\s*=\s*"([^"]+)"/\1/')
 echo "Generating a release for version 'v$RELEASE'"
 
