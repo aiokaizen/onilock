@@ -1,6 +1,6 @@
 [project]
 name = "onilock"
-version = "1.5.8"
+version = "1.6.0"
 description = "Password Manager CLI"
 authors = [
     { name = "Mouad Kommir", email = "mouadkommir@gmail.com" }
@@ -15,7 +15,8 @@ dependencies = [
     "bcrypt (>=4.2.1,<5.0.0)",
     "pyperclip (>=1.9.0,<2.0.0)",
     "keyring (>=25.6.0,<26.0.0)",
-    "python-gnupg (>=0.5.4,<0.6.0)"
+    "python-gnupg (>=0.5.4,<0.6.0)",
+    "pycryptodome (>=3.21.0,<4.0.0)",
 ]
 dynamic = [ "classifiers" ]
 
@@ -26,6 +27,7 @@ Issues = "https://github.com/aiokaizen/onilock/issues"
 [tool.poetry]
 classifiers = [
     "Development Status :: 4 - Beta",
+    # "Development Status :: 5 - Production/Stable",
     "Topic :: Security :: Cryptography",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Programming Language :: Python :: 3.10",

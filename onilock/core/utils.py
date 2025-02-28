@@ -6,8 +6,9 @@ import random
 import uuid
 
 from cryptography.fernet import Fernet
-import keyring
 import pyperclip
+
+from onilock.core.keystore import keystore
 
 
 def get_base_dir():
@@ -60,14 +61,14 @@ def get_secret_key() -> str:
     """
 
     # Retrieve key securely
-    key_name = str(uuid.uuid5(uuid.NAMESPACE_DNS, os.getlogin()))
-    stored_key = keyring.get_password("onilock", key_name)
+    key_name = str(uuid.uuid5(uuid.NAMESPACE_DNS, os.getlogin())).split("-")[-1]
+    stored_key = keystore.get_password(key_name)
     if stored_key:
         return stored_key
 
     # Generate and store the key securely
     secret_key = Fernet.generate_key()
-    keyring.set_password("onilock", key_name, secret_key.decode())
+    keystore.set_password(key_name, secret_key.decode())
 
     return secret_key.decode()
 
@@ -78,26 +79,30 @@ def get_passphrase() -> str:
     """
 
     # Retrieve key securely
-    key_name = str(uuid.uuid5(uuid.NAMESPACE_DNS, os.getlogin() + "_oni"))
-    stored_key = keyring.get_password("onilock", key_name)
+    key_name = str(uuid.uuid5(uuid.NAMESPACE_DNS, os.getlogin() + "_oni")).split("-")[
+        -1
+    ]
+    stored_key = keystore.get_password(key_name)
     if stored_key:
         return stored_key
 
     # Generate and store the key securely
     secret_key = generate_random_password(25)
-    keyring.set_password("onilock", key_name, secret_key)
+    keystore.set_password(key_name, secret_key)
 
     return secret_key
 
 
 def delete_secret_key_keyring():
-    key_name = str(uuid.uuid5(uuid.NAMESPACE_DNS, os.getlogin()))
-    keyring.delete_password("onilock", key_name)
+    key_name = str(uuid.uuid5(uuid.NAMESPACE_DNS, os.getlogin())).split("-")[-1]
+    keystore.delete_password(key_name)
 
 
 def delete_passphrase_keyring():
-    key_name = str(uuid.uuid5(uuid.NAMESPACE_DNS, os.getlogin() + "_oni"))
-    keyring.delete_password("onilock", key_name)
+    key_name = str(uuid.uuid5(uuid.NAMESPACE_DNS, os.getlogin() + "_oni")).split("-")[
+        -1
+    ]
+    keystore.delete_password(key_name)
 
 
 def str_to_bool(s: str) -> bool:
