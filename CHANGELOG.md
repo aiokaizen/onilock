@@ -1,5 +1,11 @@
 # Version 1
 
+## v1.6.0
+- Fix some bugs.
+- Implement support for terminal-based distros.
+- Implement git-hub actions for auto-deployment when a new release is created.
+- Improve project structure, and implement some design patterns
+
 ## v1.5.5
 - Update license
 - Automate publishing to pypi using Github Actions
