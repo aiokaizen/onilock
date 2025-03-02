@@ -6,6 +6,19 @@
 
 # Version 1
 
+## v1.6.1
+- Fix issue #6 | Delete password from clipboard raises an exception on WSL.
+
+## v1.6.0
+- Fix some bugs.
+- Implement support for terminal-based distros.
+- Implement git-hub actions for auto-deployment when a new release is created.
+- Improve project structure, and implement some design patterns
+
+## v1.5.5
+- Update license
+- Automate publishing to pypi using Github Actions
+
 ## v1.5.4
 - Update `version` command
 - Ignore case for `delete` and `copy` commands

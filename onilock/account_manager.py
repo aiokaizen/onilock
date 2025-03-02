@@ -85,7 +85,7 @@ def initialize(master_password: Optional[str] = None, filepath: Optional[str] = 
     name = settings.DB_NAME
 
     if not filepath:
-        filename = str(uuid.uuid5(uuid.NAMESPACE_DNS, os.getlogin()))
+        filename = str(uuid.uuid5(uuid.NAMESPACE_DNS, os.getlogin())).split("-")[-1]
         filepath = os.path.join(
             os.path.expanduser("~"), ".onilock", "vault", f"{filename}.oni"
         )

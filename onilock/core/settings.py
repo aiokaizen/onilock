@@ -46,7 +46,9 @@ class Settings:
         except ValueError:
             pass
 
-        filename = str(uuid.uuid5(uuid.NAMESPACE_DNS, os.getlogin() + "_oni"))
+        filename = str(uuid.uuid5(uuid.NAMESPACE_DNS, os.getlogin() + "_oni")).split(
+            "-"
+        )[-1]
         self.SETUP_FILEPATH = os.path.join(
             os.path.expanduser("~"),
             ".onilock",
