@@ -2,10 +2,14 @@ from threading import Lock
 from typing import Optional
 
 from onilock.core.logging_manager import logger
-from onilock.db.engines import EncryptedJsonEngine
+from onilock.db.engines import EncryptedJsonEngine, JsonEngine
 
 
 def create_engine(database_url: str):
+    return JsonEngine(db_url=database_url)
+
+
+def create_encrypted_engine(database_url: str):
     return EncryptedJsonEngine(db_url=database_url)
 
 

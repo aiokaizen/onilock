@@ -5,9 +5,13 @@ import hashlib
 
 import gnupg
 
+from onilock.core.encryption.encryption import (
+    BaseEncryptionBackend,
+    EncryptionBackendManager,
+)
 from onilock.core.settings import settings
 from onilock.core.logging_manager import logger
-from onilock.core.gpg import generate_pgp_key, pgp_key_exists
+from onilock.core.encryption import GPGEncryptionBackend
 
 
 class Engine:
@@ -17,10 +21,24 @@ class Engine:
         self.db_url = db_url
 
     def write(self, data: Any) -> None:
-        raise Exception("Unimplimented")
+        raise NotImplementedError
 
     def read(self) -> Dict:
-        raise Exception("Unimplimented")
+        raise NotImplementedError
+
+
+class EncryptedEngine:
+    """Base Encrypted Database Engine."""
+
+    def __init__(self, db_url: str, encryption_backend: BaseEncryptionBackend):
+        self.db_url = db_url
+        self.encryption_backend = EncryptionBackendManager(encryption_backend)
+
+    def write(self, data: Any) -> None:
+        raise NotImplementedError
+
+    def read(self) -> Dict:
+        raise NotImplementedError
 
 
 class JsonEngine(Engine):
@@ -50,18 +68,17 @@ class JsonEngine(Engine):
                 return dict()
 
 
-class EncryptedJsonEngine(JsonEngine):
-    """PGP-Encrypted JSON Database Engine."""
+class EncryptedJsonEngine(EncryptedEngine):
+    """Encrypted JSON Database Engine."""
 
-    def __init__(self, db_url: str):
-        super().__init__(db_url)
+    def __init__(self, db_url: str, encryption_backend: BaseEncryptionBackend):
+        super().__init__(db_url, encryption_backend)
 
         passphrase = settings.PASSPHRASE
         gpg_home = settings.GPG_HOME
         email = settings.PGP_EMAIL
         encryption_key = settings.PGP_REAL_NAME
 
-        self.gpg = gnupg.GPG(gnupghome=gpg_home)
         self.encryption_key = encryption_key  # Recipient key fingerprint/ID
         self.passphrase = passphrase  # Passphrase for private key
 
