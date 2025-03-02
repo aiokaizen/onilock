@@ -18,9 +18,12 @@ def get_base_dir():
 def clear_clipboard_after_delay(content: str, delay=60):
     """Clears the clipboard after a delay if it still contains the given content."""
     time.sleep(delay)
-    cb_content = pyperclip.paste()
-    if cb_content == content:  # Check if clipboard still contains the password
-        pyperclip.copy("")  # Clear the clipboard
+    try:
+        cb_content = pyperclip.paste()
+        if cb_content == content:  # Check if clipboard still contains the password
+            pyperclip.copy("")  # Clear the clipboard
+    except Exception as e:
+        pass
 
 
 def generate_random_password(
