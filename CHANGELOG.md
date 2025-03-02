@@ -1,5 +1,8 @@
 # Version 1
 
+## v1.6.1
+- Fix issue #6 | Delete password from clipboard raises an exception on WSL.
+
 ## v1.6.0
 - Fix some bugs.
 - Implement support for terminal-based distros.
