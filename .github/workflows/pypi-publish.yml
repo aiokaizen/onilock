@@ -21,9 +21,21 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y gpg xclip
+          python -m venv venv
+          source venv/bin/activate
+          pip install -r all_requirements.txt
+
+      - name: Run tests
+        run: |
+          source venv/bin/activate
+          python -m unittest discover
+
       - name: Build release distributions
         run: |
-          python -m venv venv
           source venv/bin/activate
           pip install -r all_requirements.txt
           python -m build
