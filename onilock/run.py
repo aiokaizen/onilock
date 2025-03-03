@@ -3,7 +3,9 @@ import importlib.metadata
 
 import typer
 
+from onilock.core.decorators import ExceptionHandler, exception_handler
 from onilock.core.utils import generate_random_password
+from onilock.filemanager import FileManager
 from onilock.account_manager import (
     copy_account_password,
     delete_profile,
@@ -14,9 +16,11 @@ from onilock.account_manager import (
 )
 
 app = typer.Typer()
+filemanager = FileManager()
 
 
 @app.command()
+@exception_handler
 def init(
     master_password: Optional[str] = None,
 ):
@@ -42,6 +46,7 @@ def init(
 
 
 @app.command()
+@exception_handler
 def new(
     name: str = typer.Option(..., prompt="Enter Account name (e.g. Github)"),
     password: Optional[str] = typer.Option(
@@ -67,7 +72,22 @@ def new(
     return new_account(name, password, username, url, description)
 
 
+@app.command()
+@ExceptionHandler
+def file_encrypt(file_id: str, filename: str):
+    """
+    Encrypt a file and save it in the vault.
+
+    Args:
+        file_id (str): To identify the file when reading and decrypting.
+        filename (str): The file path to encrypt.
+    """
+    raise NotImplementedError()
+    filemanager.encrypt(file_id, filename)
+
+
 @app.command("list")
+@exception_handler
 def accounts():
     """List all available accounts."""
 
@@ -75,6 +95,7 @@ def accounts():
 
 
 @app.command()
+@exception_handler
 def copy(name: str):
     """
     Copy the password of the account with the provided name or index to the clipboard.
@@ -93,6 +114,7 @@ def copy(name: str):
 
 
 @app.command()
+@exception_handler
 def remove(name: str):
     """
     Remove an account.
@@ -104,6 +126,7 @@ def remove(name: str):
 
 
 @app.command()
+@exception_handler
 def generate(
     len: int = typer.Option(8, prompt="Enter password length"),
     special_chars: bool = typer.Option(True, prompt="Include special characters?"),
@@ -116,6 +139,7 @@ def generate(
 
 
 @app.command("clear")
+@exception_handler
 def clear_user_data(
     master_password: str = typer.Option(
         prompt="Enter Account's master password.",
@@ -132,6 +156,7 @@ def clear_user_data(
 
 
 @app.command()
+@exception_handler
 def version():
     """Print the current version of onilock and exit."""
     v = importlib.metadata.version("onilock")
