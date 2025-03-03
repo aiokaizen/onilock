@@ -1,4 +1,5 @@
 import os
+import getpass
 import time
 import string
 import secrets
@@ -13,6 +14,10 @@ from onilock.core.keystore import keystore
 
 def get_base_dir():
     return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+def getlogin():
+    return getpass.getuser()
 
 
 def clear_clipboard_after_delay(content: str, delay=60):
@@ -64,7 +69,7 @@ def get_secret_key() -> str:
     """
 
     # Retrieve key securely
-    key_name = str(uuid.uuid5(uuid.NAMESPACE_DNS, os.getlogin())).split("-")[-1]
+    key_name = str(uuid.uuid5(uuid.NAMESPACE_DNS, getlogin())).split("-")[-1]
     stored_key = keystore.get_password(key_name)
     if stored_key:
         return stored_key
@@ -82,9 +87,7 @@ def get_passphrase() -> str:
     """
 
     # Retrieve key securely
-    key_name = str(uuid.uuid5(uuid.NAMESPACE_DNS, os.getlogin() + "_oni")).split("-")[
-        -1
-    ]
+    key_name = str(uuid.uuid5(uuid.NAMESPACE_DNS, getlogin() + "_oni")).split("-")[-1]
     stored_key = keystore.get_password(key_name)
     if stored_key:
         return stored_key
@@ -97,14 +100,12 @@ def get_passphrase() -> str:
 
 
 def delete_secret_key_keyring():
-    key_name = str(uuid.uuid5(uuid.NAMESPACE_DNS, os.getlogin())).split("-")[-1]
+    key_name = str(uuid.uuid5(uuid.NAMESPACE_DNS, getlogin())).split("-")[-1]
     keystore.delete_password(key_name)
 
 
 def delete_passphrase_keyring():
-    key_name = str(uuid.uuid5(uuid.NAMESPACE_DNS, os.getlogin() + "_oni")).split("-")[
-        -1
-    ]
+    key_name = str(uuid.uuid5(uuid.NAMESPACE_DNS, getlogin() + "_oni")).split("-")[-1]
     keystore.delete_password(key_name)
 
 

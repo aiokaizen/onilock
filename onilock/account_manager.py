@@ -21,6 +21,7 @@ from onilock.core.utils import (
     delete_secret_key_keyring,
     generate_random_password,
     get_passphrase,
+    getlogin,
 )
 from onilock.db import DatabaseManager
 from onilock.db.models import Profile, Account
@@ -85,7 +86,7 @@ def initialize(master_password: Optional[str] = None, filepath: Optional[str] = 
     name = settings.DB_NAME
 
     if not filepath:
-        filename = str(uuid.uuid5(uuid.NAMESPACE_DNS, os.getlogin())).split("-")[-1]
+        filename = str(uuid.uuid5(uuid.NAMESPACE_DNS, getlogin())).split("-")[-1]
         filepath = os.path.join(
             os.path.expanduser("~"), ".onilock", "vault", f"{filename}.oni"
         )
