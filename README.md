@@ -43,15 +43,9 @@ pipx install onilock
 
 If you encounter any issues with the `init` command, make sure the following dependancies are setup in your system:
 
-1. **Ensure dbus and a keyring backend are installed**. If not, run the following command
+1. **Ensure xclip and gpg are installed**. If not, run the following command
 ```sh
-sudo apt install gnome-keyring dbus-x11
-```
-
-2. **Start the key-ring daemon**
-```sh
-eval $(dbus-launch --sh-syntax)
-export $(gnome-keyring-daemon --start)
+sudo apt install xclip gpg
 ```
 
 
