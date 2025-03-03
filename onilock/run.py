@@ -3,7 +3,7 @@ import importlib.metadata
 
 import typer
 
-from onilock.core.decorators import ExceptionHandler, exception_handler
+from onilock.core.decorators import exception_handler
 from onilock.core.utils import generate_random_password
 from onilock.filemanager import FileManager
 from onilock.account_manager import (
@@ -73,7 +73,7 @@ def new(
 
 
 @app.command()
-@ExceptionHandler
+@exception_handler
 def file_encrypt(file_id: str, filename: str):
     """
     Encrypt a file and save it in the vault.
