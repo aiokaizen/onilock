@@ -1,7 +1,6 @@
 import os
 import json
 import hashlib
-import base64
 from typing import Dict, Optional
 import uuid
 
