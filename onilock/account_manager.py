@@ -70,7 +70,7 @@ def get_profile_engine():
     return db_manager.add_engine("data", config_filepath)
 
 
-def initialize(master_password: Optional[str] = None, filepath: Optional[str] = None):
+def initialize(master_password: Optional[str] = None):
     """
     Initialize the password manager whith a master password.
 
@@ -79,17 +79,15 @@ def initialize(master_password: Optional[str] = None, filepath: Optional[str] = 
 
     Args:
         master_password (Optional[str]): The master password used to secure all the other accounts.
-        filepath (Optional[str]): The filepath where the user wants to save their accounts data.
     """
     logger.debug("Initializing database with a master password.")
 
     name = settings.DB_NAME
 
-    if not filepath:
-        filename = str(uuid.uuid5(uuid.NAMESPACE_DNS, getlogin())).split("-")[-1]
-        filepath = os.path.join(
-            os.path.expanduser("~"), ".onilock", "vault", f"{filename}.oni"
-        )
+    filename = str(uuid.uuid5(uuid.NAMESPACE_DNS, getlogin())).split("-")[-1]
+    filepath = os.path.join(
+        os.path.expanduser("~"), ".onilock", "vault", f"{filename}.oni"
+    )
 
     db_manager = DatabaseManager(database_url=filepath)
     engine = db_manager.get_engine()
