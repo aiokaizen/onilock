@@ -16,7 +16,6 @@ from onilock.account_manager import (
     copy_account_password,
     remove_account,
 )
-from onilock.constants import PUNCTUATION_CHARACTERS
 from onilock.core.logging_manager import logger
 from onilock.run import app
 
