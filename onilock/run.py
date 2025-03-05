@@ -46,13 +46,6 @@ def init(
 
 @app.command()
 @exception_handler
-def upgrade_vault():
-    """Migrate the vault from one version to another."""
-    raise NotImplementedError()
-
-
-@app.command()
-@exception_handler
 def new(
     name: str = typer.Option(..., prompt="Enter Account name (e.g. Github)"),
     password: Optional[str] = typer.Option(
@@ -172,6 +165,30 @@ def version():
 @app.command()
 @exception_handler
 def info():
+    """
+    Displays information and metadata about the user profile.
+
+    e.g.
+        - Profile name
+        - Creation time
+        - Vault version
+        - OniLock version
+        - Number of stored passwords
+        - Master password hash
+        - Number and list of Weak passwords
+    """
+    raise NotImplementedError()
+
+
+@app.command()
+@exception_handler
+def export(dist: str = "."):
+    """
+    Export all user data to an external zip file.
+
+    Args:
+        dist (Optional[str]): The destination zip file path. Defaults to current directory.
+    """
     raise NotImplementedError()
 
 
