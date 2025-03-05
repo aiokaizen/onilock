@@ -1,14 +1,19 @@
-from datetime import datetime
-import os
 import logging
-import colorlog
+import os
+from datetime import datetime
+from pathlib import Path
 from logging import StreamHandler
 from logging.handlers import RotatingFileHandler
 from typing import Dict
-from onilock.core.settings import settings
+
+import colorlog
+
+from onilock.core.constants import DEBUG_ENV_NAME, TRUTHFUL_STR
 
 # @TODO: Change logs directory to /var/log/onilock
-LOGS_DIR = "/tmp/logs/onilock"
+LOGS_DIR = Path("/tmp/logs/onilock")
+
+DEBUG = os.environ.get(DEBUG_ENV_NAME, "false") in TRUTHFUL_STR
 
 
 class LoggingManager:
@@ -28,9 +33,8 @@ class LoggingManager:
         self.logger.setLevel(default_level)
         self.handlers: Dict[str, logging.Handler] = {}
 
-        # @TODO: Change logs directory to /var/log/onilock
-        if not os.path.exists(LOGS_DIR):
-            os.makedirs(LOGS_DIR)
+        # Create log directory if it does not exist.
+        LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
     def add_console_handler(self, level: int = logging.INFO):
         """Add a console (stdout) logging handler."""
@@ -89,18 +93,14 @@ class LoggingManager:
         return self.logger
 
 
-_log_manager = LoggingManager(
-    default_level=logging.DEBUG if settings.DEBUG else logging.ERROR
-)
+_log_manager = LoggingManager(default_level=logging.DEBUG if DEBUG else logging.ERROR)
 
 # Add console handler
-_log_manager.add_console_handler(
-    level=logging.DEBUG if settings.DEBUG else logging.ERROR
-)
+_log_manager.add_console_handler(level=logging.DEBUG if DEBUG else logging.ERROR)
 
 # Add file handler
 today = datetime.today().strftime("%Y%m%d")
-logging_level = logging.DEBUG if settings.DEBUG else logging.ERROR
+logging_level = logging.DEBUG if DEBUG else logging.ERROR
 _log_manager.add_file_handler(
     filepath=os.path.join(LOGS_DIR, f"{today}.log"),
     level=logging_level,

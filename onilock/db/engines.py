@@ -1,13 +1,15 @@
 import os
 import json
-from typing import Any, Dict
+from pathlib import Path
+from typing import Any, Dict, Optional
 import hashlib
 
-import gnupg
-
+from onilock.core.encryption.encryption import (
+    BaseEncryptionBackend,
+    EncryptionBackendManager,
+)
 from onilock.core.settings import settings
 from onilock.core.logging_manager import logger
-from onilock.core.gpg import generate_pgp_key, pgp_key_exists
 
 
 class Engine:
@@ -21,6 +23,22 @@ class Engine:
 
     def read(self) -> Dict:
         raise Exception("Unimplimented")
+
+
+class EncryptedEngine:
+    """Base Encrypted Database Engine."""
+
+    def __init__(
+        self, db_url: str, encryption_backend: Optional[BaseEncryptionBackend] = None
+    ):
+        self.db_url = db_url
+        self.encryption_backend = EncryptionBackendManager(encryption_backend)
+
+    def write(self, data: Any) -> None:
+        raise NotImplementedError
+
+    def read(self) -> Dict:
+        raise NotImplementedError
 
 
 class JsonEngine(Engine):
@@ -50,33 +68,14 @@ class JsonEngine(Engine):
                 return dict()
 
 
-class EncryptedJsonEngine(JsonEngine):
+class EncryptedJsonEngine(EncryptedEngine):
     """PGP-Encrypted JSON Database Engine."""
 
-    def __init__(self, db_url: str):
-        super().__init__(db_url)
-
-        passphrase = settings.PASSPHRASE
-        gpg_home = settings.GPG_HOME
-        email = settings.PGP_EMAIL
-        encryption_key = settings.PGP_REAL_NAME
-
-        self.gpg = gnupg.GPG(gnupghome=gpg_home)
-        self.encryption_key = encryption_key  # Recipient key fingerprint/ID
-        self.passphrase = passphrase  # Passphrase for private key
-
-        key_generated = pgp_key_exists(
-            gpg_home=gpg_home,
-            real_name=encryption_key,
-        )
-
-        if not key_generated:
-            generate_pgp_key(
-                gpg_home=gpg_home,
-                name=encryption_key,
-                email=email,
-                passphrase=self.passphrase,
-            )
+    def __init__(
+        self, db_url: str, encryption_backend: Optional[BaseEncryptionBackend] = None
+    ):
+        super().__init__(db_url, encryption_backend)
+        self.filepath = db_url
 
     def write(self, data: Dict) -> None:
         """Encrypt data and write to file."""
@@ -92,9 +91,8 @@ class EncryptedJsonEngine(JsonEngine):
         logger.debug(f"Calculated checksum: {checksum}")
 
         # Encrypt data
-        encrypted_data = self.gpg.encrypt(
+        encrypted_data = self.encryption_backend.encrypt(
             f"{checksum}{settings.CHECKSUM_SEPARATOR}{json_data}",
-            recipients=self.encryption_key,
             always_trust=True,
             armor=False,  # ← This is crucial to disable base64 encoding
         )
@@ -103,36 +101,35 @@ class EncryptedJsonEngine(JsonEngine):
             raise RuntimeError(f"Encryption failed: {encrypted_data.status}")
 
         # Write encrypted data as binary
-        with open(self.filepath, "wb") as f:
-            f.write(encrypted_data.data)
+        Path(self.filepath).write_bytes(encrypted_data.data)
 
     def read(self) -> Dict:
         """Read and decrypt data from file."""
-        if not os.path.exists(self.filepath):
+        filepath = Path(self.filepath)
+
+        if not filepath.exists():
+            logger.debug(f"File {filepath} does not exist. Returning an empty dict.")
             return dict()
 
-        with open(self.filepath, "rb") as f:
-            encrypted_data = f.read()
+        encrypted_data = filepath.read_bytes()
 
-            # Decrypt data
-            decrypted_data = self.gpg.decrypt(
-                encrypted_data, passphrase=self.passphrase
+        # Decrypt data
+        decrypted_data = self.encryption_backend.decrypt(encrypted_data)
+
+        if not decrypted_data.ok:
+            raise RuntimeError(f"Decryption failed: {decrypted_data.status}")
+
+        # Split checksum and data
+        try:
+            stored_checksum, data = decrypted_data.data.decode().split(
+                settings.CHECKSUM_SEPARATOR, 1
             )
+        except ValueError:
+            raise ValueError("Invalid file format")
 
-            if not decrypted_data.ok:
-                raise RuntimeError(f"Decryption failed: {decrypted_data.status}")
+        # Verify file integrity
+        current_checksum = hashlib.sha256(data.encode()).hexdigest()
+        if current_checksum != stored_checksum:
+            raise RuntimeError("Data corruption detected! Checksum mismatch")
 
-            # Split checksum and data
-            try:
-                stored_checksum, data = decrypted_data.data.decode().split(
-                    settings.CHECKSUM_SEPARATOR, 1
-                )
-            except ValueError:
-                raise ValueError("Invalid file format")
-
-            # Verify file integrity
-            current_checksum = hashlib.sha256(data.encode()).hexdigest()
-            if current_checksum != stored_checksum:
-                raise RuntimeError("Data corruption detected! Checksum mismatch")
-
-            return json.loads(data)
+        return json.loads(data)

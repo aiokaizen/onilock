@@ -1,11 +1,10 @@
 from typing import Optional
-import importlib.metadata
 
 import typer
 
 from onilock.core.decorators import exception_handler
-from onilock.core.utils import generate_random_password
-from onilock.filemanager import FileManager
+from onilock.core.utils import generate_random_password, get_version
+from onilock.filemanager import FileEncryptionManager
 from onilock.account_manager import (
     copy_account_password,
     delete_profile,
@@ -16,7 +15,7 @@ from onilock.account_manager import (
 )
 
 app = typer.Typer()
-filemanager = FileManager()
+filemanager = FileEncryptionManager()
 
 
 @app.command()
@@ -43,6 +42,13 @@ def init(
         master_password = typer.prompt("> ", default="", hide_input=True)
 
     return initialize(master_password)
+
+
+@app.command()
+@exception_handler
+def upgrade_vault():
+    """Migrate the vault from one version to another."""
+    raise NotImplementedError()
 
 
 @app.command()
@@ -159,8 +165,14 @@ def clear_user_data(
 @exception_handler
 def version():
     """Print the current version of onilock and exit."""
-    v = importlib.metadata.version("onilock")
+    v = get_version()
     typer.echo(f"OniLock {v}")
+
+
+@app.command()
+@exception_handler
+def info():
+    raise NotImplementedError()
 
 
 if __name__ == "__main__":
