@@ -10,6 +10,7 @@ class Account(BaseModel):
     id: str = Field(description="Password Identification")
     username: str = Field(default="", description="Username")
     encrypted_password: str = Field(description="Encrypted Password")
+    is_weak_password: bool = Field(default=True, description="Password is weak")
     url: Optional[str] = Field(default=None, description="URL or Service name")
     description: Optional[str] = Field(default=None, description="Description")
     created_at: int = Field(description="Creation date")

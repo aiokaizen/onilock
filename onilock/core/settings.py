@@ -6,7 +6,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from onilock.core.constants import DEBUG_ENV_NAME
-from onilock.core.enums import DBBackEndEnum, KeyStoreBackendEnum
+from onilock.core.enums import DBBackEndEnum
 
 
 class Settings:

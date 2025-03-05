@@ -10,6 +10,7 @@ import pyperclip
 import bcrypt
 import typer
 
+from onilock.core.decorators import pre_post_hooks
 from onilock.core.keystore import keystore
 from onilock.core.settings import settings
 from onilock.core.logging_manager import logger
@@ -34,6 +35,16 @@ __all__ = [
     "remove_account",
     "delete_profile",
 ]
+
+
+def pre_command():
+    logger.debug("Starting pre-command hook.")
+    # migrate_vault(profile.vault_version, Profile.vault_version)
+    # version = get_version()
+
+
+def post_command():
+    logger.debug("Starting post-command hook.")
 
 
 def verify_master_password(master_password: str):
@@ -72,6 +83,7 @@ def get_profile_engine():
     return db_manager.add_engine("data", config_filepath, is_encrypted=True)
 
 
+@pre_post_hooks(pre_command, post_command)
 def initialize(master_password: Optional[str] = None):
     """
     Initialize the password manager whith a master password.
@@ -86,10 +98,8 @@ def initialize(master_password: Optional[str] = None):
 
     name = settings.DB_NAME
 
-    filename = str(uuid.uuid5(uuid.NAMESPACE_DNS, getlogin())).split("-")[-1]
-    filepath = os.path.join(
-        os.path.expanduser("~"), ".onilock", "vault", f"{filename}.oni"
-    )
+    filename = generate_random_password(12, include_special_characters=False) + ".oni"
+    filepath = os.path.join(os.path.expanduser("~"), ".onilock", "vault", filename)
 
     db_manager = DatabaseManager(database_url=filepath, is_encrypted=True)
     engine = db_manager.get_engine()
@@ -121,11 +131,9 @@ def initialize(master_password: Optional[str] = None):
     hashed_master_password = bcrypt.hashpw(master_password.encode(), bcrypt.gensalt())
     b64_hashed_master_password = base64.b64encode(hashed_master_password).decode()
 
-    vault_version = get_version()
     profile = Profile(
         name=name,
         master_password=b64_hashed_master_password,
-        vault_version=vault_version,
         accounts=list(),
     )
     engine.write(profile.model_dump())
@@ -148,6 +156,7 @@ def initialize(master_password: Optional[str] = None):
     return master_password
 
 
+@pre_post_hooks(pre_command, post_command)
 def new_account(
     name: str,
     password: Optional[str] = None,
@@ -201,6 +210,7 @@ def new_account(
     return password
 
 
+@pre_post_hooks(pre_command, post_command)
 def list_accounts():
     """List all available passwords."""
 
@@ -225,6 +235,7 @@ def list_accounts():
         )
 
 
+@pre_post_hooks(pre_command, post_command)
 def copy_account_password(id: str | int):
     """
     Copy the password of the account with the provided ID to the clipboard.
@@ -268,6 +279,7 @@ def copy_account_password(id: str | int):
     os._exit(0)
 
 
+@pre_post_hooks(pre_command, post_command)
 def remove_account(name: str):
     """
     Remove a password.
@@ -295,6 +307,7 @@ def remove_account(name: str):
     engine.write(profile.model_dump())
 
 
+@pre_post_hooks(pre_command, post_command)
 def delete_profile(master_password: str):
     """
     Delete all profile accounts.
