@@ -1,6 +1,8 @@
 # Version 1
 
 ## v1.6.2
+- Implement pre / post hooks for all commands.
+- Add is_weak_password attribute to Account model.
 - Implement exception handler decorator to handle all exceptions gracefully.
 - Implement Design patterns to GPG encryption.
 - Include vault version and creation timestamp in the profile data.
