@@ -1,5 +1,11 @@
 # Version 1
 
+## v1.6.2
+- Implement exception handler decorator to handle all exceptions gracefully.
+- Implement Design patterns to GPG encryption.
+- Include vault version and creation timestamp in the profile data.
+- Reduce dependency for base modules.
+
 ## v1.6.1
 - Fix issue #6 | Delete password from clipboard raises an exception on WSL.
 

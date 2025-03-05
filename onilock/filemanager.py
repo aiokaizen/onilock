@@ -1,27 +1,28 @@
-import os
 from typing import Optional
+from pathlib import Path
 
 import typer
 
 
-class FileManager:
+class FileEncryptionManager:
     """This class is responsible for all file operations."""
 
     def encrypt(self, file_id: str, filename: str):
         """Encrypts a file and stors it in the vault."""
 
-        if not os.path.exists(filename):
+        filepath = Path(filename)
+        if not filepath.exists():
             typer.echo("File does not exist.")
             exit(1)
 
-        if not os.path.isfile(filename):
+        if not filepath.is_file():
             typer.echo(
                 "Please make sure `filename` is a normal file. Directories are not supported in this version."
             )
             exit(1)
 
-        with open(filename, "rb") as f:
-            print(f"Content\n{f.read()}")
+        file_content = filepath.read_bytes()
+        print(f"Content\n{file_content}")
 
         print(f"File {filename} was successfully incrypted.")
 

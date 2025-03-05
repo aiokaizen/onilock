@@ -1,6 +1,7 @@
 import os
 import json
 import hashlib
+from pathlib import Path
 from typing import Dict, Optional
 import uuid
 
@@ -8,6 +9,8 @@ import keyring
 from Crypto.Cipher import AES
 from Crypto.Random import get_random_bytes
 from Crypto.Util.Padding import pad, unpad
+
+from onilock.core.enums import KeyStoreBackendEnum
 
 
 class KeyStore:
@@ -61,7 +64,7 @@ class KeyRing(KeyStore):
         keyring.delete_password(self.keystore_id, id)
 
 
-class FileKeyStore(KeyStore):
+class VaultKeyStore(KeyStore):
     """
     Less secure key store using the filesystem to store passwords.
     """
@@ -89,15 +92,14 @@ class FileKeyStore(KeyStore):
 
     def _read_keystore(self) -> Dict:
         try:
-            with open(self.filename, "rb") as f:
-                encrypted_data = f.read()
-                self.iv = encrypted_data[self.BLOCK_SIZE : self.BLOCK_SIZE * 2]
-                encrypted_data = (
-                    encrypted_data[: self.BLOCK_SIZE]
-                    + encrypted_data[self.BLOCK_SIZE * 2 :]
-                )
-                json_str = unpad(self._cipher.decrypt(encrypted_data), self.BLOCK_SIZE)
-                return json.loads(json_str)
+            encrypted_data = Path(self.filename).read_bytes()
+            self.iv = encrypted_data[self.BLOCK_SIZE : self.BLOCK_SIZE * 2]
+            encrypted_data = (
+                encrypted_data[: self.BLOCK_SIZE]
+                + encrypted_data[self.BLOCK_SIZE * 2 :]
+            )
+            json_str = unpad(self._cipher.decrypt(encrypted_data), self.BLOCK_SIZE)
+            return json.loads(json_str)
         except FileNotFoundError:
             return dict()
 
@@ -105,13 +107,12 @@ class FileKeyStore(KeyStore):
         json_str = json.dumps(data)
         padded_data = pad(json_str.encode(), self.BLOCK_SIZE)
         encrypted_data = self._cipher.encrypt(padded_data)
-        with open(self.filename, "wb") as f:
-            iv_data = (
-                encrypted_data[: self.BLOCK_SIZE]
-                + self.iv
-                + encrypted_data[self.BLOCK_SIZE :]
-            )
-            f.write(iv_data)
+        iv_data = (
+            encrypted_data[: self.BLOCK_SIZE]
+            + self.iv
+            + encrypted_data[self.BLOCK_SIZE :]
+        )
+        Path(self.filename).write_bytes(iv_data)
 
     def clean(self):
         os.remove(self.filename)
@@ -137,10 +138,19 @@ class KeyStoreManager(KeyStore):
     keystore: KeyStore
 
     def __init__(self, keystore_id: str):
-        try:
-            self.keystore = KeyRing(keystore_id)
-        except Exception as e:
-            self.keystore = FileKeyStore(keystore_id)
+        """Initialize the KeyStore manger class."""
+
+        default_backend = os.environ.get(
+            "ONI_DEFAULT_KEYSTORE_BACKEND", KeyStoreBackendEnum.KEYRING.value
+        )
+
+        if default_backend == KeyStoreBackendEnum.KEYRING.value:
+            try:
+                self.keystore = KeyRing(keystore_id)
+            except Exception:
+                self.keystore = VaultKeyStore(keystore_id)
+        elif default_backend == KeyStoreBackendEnum.VAULT.value:
+            self.keystore = VaultKeyStore(keystore_id)
 
     def set_password(self, id: str, password: str) -> None:
         return self.keystore.set_password(id, password)
