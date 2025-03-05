@@ -1,15 +1,12 @@
 import os
 import uuid
-from enum import Enum
 from typing import Optional
+from pathlib import Path
 
-from onilock.core.utils import get_passphrase, get_secret_key, getlogin, str_to_bool
+from dotenv import load_dotenv
 
-
-class DBBackEndEnum(Enum):
-    JSON = "Json"
-    SQLITE = "SQLite"  # Not implemented yet
-    POSTGRES = "PostgreSQL"  # Not implemented yet
+from onilock.core.constants import DEBUG_ENV_NAME
+from onilock.core.enums import DBBackEndEnum, KeyStoreBackendEnum
 
 
 class Settings:
@@ -18,11 +15,32 @@ class Settings:
     """
 
     def __init__(self) -> None:
+        # Importing inside the function in order to prevent circular imports.
+        from onilock.core.utils import (
+            get_passphrase,
+            get_secret_key,
+            getlogin,
+            str_to_bool,
+        )
+
+        # OniLock vault directory
+        vault_dir = os.path.join(Path.home(), ".onilock", "vault")
+
+        # Load environment variables if .env file is found.
+        env_filenames = [
+            # Order matters. envs in the bottom override envs in the top of the list.
+            os.path.join(vault_dir, ".env"),
+            ".env",
+        ]
+        for filename in env_filenames:
+            if os.path.exists(filename):
+                load_dotenv(filename)
+
         try:
-            debug = str_to_bool(os.environ.get("ONI_DEBUG", "false"))
+            debug = str_to_bool(os.environ.get(DEBUG_ENV_NAME, "false"))
             self.DEBUG = debug
         except ValueError:
-            pass
+            self.DEBUG = False
 
         self.SECRET_KEY = os.environ.get("ONI_SECRET_KEY", get_secret_key())
         self.DB_BACKEND = DBBackEndEnum(os.environ.get("ONI_DB_BACKEND", "Json"))
@@ -50,9 +68,7 @@ class Settings:
             -1
         ]
         self.SETUP_FILEPATH = os.path.join(
-            os.path.expanduser("~"),
-            ".onilock",
-            "vault",
+            vault_dir,
             f"{filename}.oni",
         )
 

@@ -1,5 +1,8 @@
+from datetime import datetime, timezone
+import importlib.metadata
 import os
 import getpass
+from pathlib import Path
 import time
 import string
 import secrets
@@ -9,6 +12,7 @@ import uuid
 from cryptography.fernet import Fernet
 import pyperclip
 
+from onilock.core.constants import TRUTHFUL_STR, UNTRUTHFUL_STR
 from onilock.core.keystore import keystore
 
 
@@ -20,6 +24,11 @@ def getlogin():
     return getpass.getuser()
 
 
+def naive_utcnow():
+    now = datetime.now(tz=timezone.utc)
+    return now.replace(tzinfo=None)
+
+
 def clear_clipboard_after_delay(content: str, delay=60):
     """Clears the clipboard after a delay if it still contains the given content."""
     time.sleep(delay)
@@ -27,8 +36,24 @@ def clear_clipboard_after_delay(content: str, delay=60):
         cb_content = pyperclip.paste()
         if cb_content == content:  # Check if clipboard still contains the password
             pyperclip.copy("")  # Clear the clipboard
-    except Exception as e:
+    except Exception:
         pass
+
+
+def get_version() -> str:
+    try:
+        return importlib.metadata.version("onilock")
+    except ModuleNotFoundError:
+        pyproject = Path("pyproject.toml")
+        if not pyproject.exists():
+            return "0.0.1"
+
+        with pyproject.open() as f:
+            for line in f:
+                if line.startswith("version"):
+                    return line.split('"')[1]
+
+        return "0.0.1"
 
 
 def generate_random_password(
@@ -63,6 +88,14 @@ def generate_random_password(
     return "".join(password)
 
 
+def generate_key() -> str:
+    """
+    Generate a random key to use as a project secret key for example.
+    """
+    secret_key = Fernet.generate_key()
+    return secret_key.decode()
+
+
 def get_secret_key() -> str:
     """
     Retrieve or generate a random secret key to use for the project.
@@ -75,10 +108,10 @@ def get_secret_key() -> str:
         return stored_key
 
     # Generate and store the key securely
-    secret_key = Fernet.generate_key()
-    keystore.set_password(key_name, secret_key.decode())
+    secret_key = generate_key()
+    keystore.set_password(key_name, secret_key)
 
-    return secret_key.decode()
+    return secret_key
 
 
 def get_passphrase() -> str:
@@ -93,20 +126,10 @@ def get_passphrase() -> str:
         return stored_key
 
     # Generate and store the key securely
-    secret_key = generate_random_password(25)
-    keystore.set_password(key_name, secret_key)
+    password = generate_random_password(25)
+    keystore.set_password(key_name, password)
 
-    return secret_key
-
-
-def delete_secret_key_keyring():
-    key_name = str(uuid.uuid5(uuid.NAMESPACE_DNS, getlogin())).split("-")[-1]
-    keystore.delete_password(key_name)
-
-
-def delete_passphrase_keyring():
-    key_name = str(uuid.uuid5(uuid.NAMESPACE_DNS, getlogin() + "_oni")).split("-")[-1]
-    keystore.delete_password(key_name)
+    return password
 
 
 def str_to_bool(s: str) -> bool:
@@ -123,8 +146,8 @@ def str_to_bool(s: str) -> bool:
         True if the string is in: ("true", "1", "t", "yes", "on")
         True if the string is in: ("false", "0", "f", "no", "off")
     """
-    if s.lower() in ("true", "1", "t", "yes", "on"):
+    if s.lower() in TRUTHFUL_STR:
         return True
-    if s.lower() in ("false", "0", "f", "no", "off"):
+    if s.lower() in UNTRUTHFUL_STR:
         return False
     raise ValueError

@@ -10,6 +10,7 @@ import pyperclip
 import bcrypt
 import typer
 
+from onilock.core.keystore import keystore
 from onilock.core.settings import settings
 from onilock.core.logging_manager import logger
 from onilock.core.gpg import (
@@ -17,10 +18,9 @@ from onilock.core.gpg import (
 )
 from onilock.core.utils import (
     clear_clipboard_after_delay,
-    delete_passphrase_keyring,
-    delete_secret_key_keyring,
     generate_random_password,
     get_passphrase,
+    get_version,
     getlogin,
 )
 from onilock.db import DatabaseManager
@@ -61,13 +61,15 @@ def get_profile_engine():
     """Get user config engine."""
 
     cipher = Fernet(settings.SECRET_KEY.encode())
-    db_manager = DatabaseManager(database_url=settings.SETUP_FILEPATH)
+    db_manager = DatabaseManager(
+        database_url=settings.SETUP_FILEPATH, is_encrypted=True
+    )
     setup_engine = db_manager.get_engine()
     setup_data = setup_engine.read()
     b64encrypted_config_filepath = setup_data[settings.DB_NAME]["filepath"]
     encrypted_filepath = base64.b64decode(b64encrypted_config_filepath)
     config_filepath = cipher.decrypt(encrypted_filepath).decode()
-    return db_manager.add_engine("data", config_filepath)
+    return db_manager.add_engine("data", config_filepath, is_encrypted=True)
 
 
 def initialize(master_password: Optional[str] = None):
@@ -89,9 +91,11 @@ def initialize(master_password: Optional[str] = None):
         os.path.expanduser("~"), ".onilock", "vault", f"{filename}.oni"
     )
 
-    db_manager = DatabaseManager(database_url=filepath)
+    db_manager = DatabaseManager(database_url=filepath, is_encrypted=True)
     engine = db_manager.get_engine()
-    setup_engine = db_manager.add_engine("setup", settings.SETUP_FILEPATH)
+    setup_engine = db_manager.add_engine(
+        "setup", settings.SETUP_FILEPATH, is_encrypted=True
+    )
     data = engine.read()
     setup_data = setup_engine.read()
 
@@ -100,25 +104,28 @@ def initialize(master_password: Optional[str] = None):
         exit(1)
 
     if not master_password:
-        logger.warning(
-            "Master password not provided! A random password will be generated and returned."
+        logger.info(
+            "Master password not provided! A random password will be generated and displayed."
         )
         master_password = generate_random_password(
             length=25, include_special_characters=True
         )
         typer.echo(
-            f"Generated password: {master_password}\n"
-            "This is the only time this password is visible. Make sure you copy it to a safe place before proceding."
+            f"\nGenerated password: {master_password}\n"
+            "This is the only time this password is visible. Make sure you copy it to a safe place before proceding.\n"
         )
-
-    # @TODO: Verify master password strength.
+    else:
+        # @TODO: Verify master password strength.
+        pass
 
     hashed_master_password = bcrypt.hashpw(master_password.encode(), bcrypt.gensalt())
     b64_hashed_master_password = base64.b64encode(hashed_master_password).decode()
 
+    vault_version = get_version()
     profile = Profile(
         name=name,
         master_password=b64_hashed_master_password,
+        vault_version=vault_version,
         accounts=list(),
     )
     engine.write(profile.model_dump())
@@ -296,7 +303,9 @@ def delete_profile(master_password: str):
         master_password (str): Profile master password.
     """
     cipher = Fernet(settings.SECRET_KEY.encode())
-    db_manager = DatabaseManager(database_url=settings.SETUP_FILEPATH)
+    db_manager = DatabaseManager(
+        database_url=settings.SETUP_FILEPATH, is_encrypted=True
+    )
     setup_engine = db_manager.get_engine()
     setup_data = setup_engine.read()
     b64encrypted_config_filepath = setup_data[settings.DB_NAME]["filepath"]
@@ -320,8 +329,13 @@ def delete_profile(master_password: str):
     passphrase = get_passphrase()
 
     # Delete keyrings
-    delete_secret_key_keyring()
-    delete_passphrase_keyring()
+    password_name = str(uuid.uuid5(uuid.NAMESPACE_DNS, getlogin())).split("-")[-1]
+    keystore.delete_password(password_name)
+
+    passphrase_name = str(uuid.uuid5(uuid.NAMESPACE_DNS, getlogin() + "_oni")).split(
+        "-"
+    )[-1]
+    keystore.delete_password(passphrase_name)
 
     # Delete PGP key
     delete_pgp_key(
