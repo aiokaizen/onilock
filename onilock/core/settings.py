@@ -24,23 +24,25 @@ class Settings:
         )
 
         # OniLock vault directory
-        vault_dir = os.path.join(Path.home(), ".onilock", "vault")
+        self.VAULT_DIR = Path.home() / ".onilock" / "vault"
 
         # Load environment variables if .env file is found.
         env_filenames = [
             # Order matters. envs in the bottom override envs in the top of the list.
-            os.path.join(vault_dir, ".env"),
+            Path.home() / ".onilock.env",
+            self.VAULT_DIR / ".env",
             ".env",
         ]
         for filename in env_filenames:
             if os.path.exists(filename):
                 load_dotenv(filename)
 
+        self.DEBUG = False
         try:
             debug = str_to_bool(os.environ.get(DEBUG_ENV_NAME, "false"))
             self.DEBUG = debug
         except ValueError:
-            self.DEBUG = False
+            pass
 
         self.SECRET_KEY = os.environ.get("ONI_SECRET_KEY", get_secret_key())
         self.DB_BACKEND = DBBackEndEnum(os.environ.get("ONI_DB_BACKEND", "Json"))
@@ -68,7 +70,7 @@ class Settings:
             -1
         ]
         self.SETUP_FILEPATH = os.path.join(
-            vault_dir,
+            self.VAULT_DIR,
             f"{filename}.oni",
         )
 
