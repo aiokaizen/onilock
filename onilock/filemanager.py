@@ -31,7 +31,7 @@ class FileEncryptionManager:
             gnupghome=gpg_home or settings.GPG_HOME,
         )
 
-    def encrypt_bytes(self, data: BinaryIO, output_filename: Path | str):
+    def encrypt_bytes(self, data: bytes, output_filename: Path | str):
         """Encrypts a file and stors it in the vault."""
 
         output_filepath: Path = (
@@ -40,7 +40,7 @@ class FileEncryptionManager:
             else Path(output_filename)
         )
 
-        encrypted_data = self.gpg.encrypt_file(
+        encrypted_data = self.gpg.encrypt(
             data,
             recipients=[settings.PGP_REAL_NAME],  # The recipient's email or key ID
             always_trust=True,  # Avoids trust prompt
@@ -72,11 +72,11 @@ class FileEncryptionManager:
             exit(1)
 
         with target_filepath.open("rb") as f:
-            return self.encrypt_bytes(f, output_filepath)
+            return self.encrypt_bytes(f.read(), output_filepath)
 
-    def decrypt_bytes(self, data: BinaryIO):
+    def decrypt_bytes(self, data: bytes):
         decrypted_data = self.gpg.decrypt(
-            data.read(),
+            data,
             always_trust=True,
             passphrase=settings.PASSPHRASE,
         )
@@ -88,9 +88,8 @@ class FileEncryptionManager:
         encrypted_filename = get_output_filename(file_id)
         encrypted_filepath = settings.VAULT_DIR / encrypted_filename
 
-        # with Path("event.json.gpg").open("rb") as f:
         with encrypted_filepath.open("rb") as f:
-            return self.decrypt_bytes(f)
+            return self.decrypt_bytes(f.read())
 
     def open(self, file_id: str, readonly=False):
         decrypted_data = self.decrypt(file_id)
@@ -167,7 +166,6 @@ class FileEncryptionManager:
         with zipfile.ZipFile(output_file, "w", zipfile.ZIP_DEFLATED) as zipf:
             # Create a folder inside the zip file
             folder_name = "onilock_vault_files/"
-
             # Iterate over the binary strings and add each as a separate file in the folder
             for encrypted_filename in export_filenames:
                 file_name = (
