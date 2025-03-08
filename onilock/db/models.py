@@ -16,6 +16,11 @@ class Account(BaseModel):
     created_at: int = Field(description="Creation date")
 
 
+class File(BaseModel):
+    id: str = Field(description="File ID")
+    location: str = Field(description="File Location")
+
+
 class Profile(BaseModel):
     name: str
     master_password: str = Field(description="Hashed Master Password")
@@ -24,6 +29,7 @@ class Profile(BaseModel):
         default=naive_utcnow().timestamp(), description="Creation time"
     )
     accounts: List[Account]
+    files: List[File] = Field([])
 
     def get_account(self, id: str | int) -> Account | None:
         if isinstance(id, int):
@@ -42,4 +48,23 @@ class Profile(BaseModel):
         for index, password in enumerate(self.accounts):
             if password.id.lower() == id.lower():
                 del self.accounts[index]
+                break
+
+    def get_file(self, id: str | int):
+        if isinstance(id, int):
+            try:
+                return self.files[id]
+            except IndexError:
+                logger.error("Invalid file index")
+                return None
+
+        for file in self.files:
+            if file.id == id:
+                return file
+        return None
+
+    def remove_file(self, id: str):
+        for index, file in enumerate(self.files):
+            if file.id == id:
+                del self.files[index]
                 break

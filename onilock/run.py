@@ -73,7 +73,7 @@ def new(
 
 @app.command()
 @exception_handler
-def file_encrypt(file_id: str, filename: str):
+def encrypt_file(file_id: str, filename: str):
     """
     Encrypt a file and save it in the vault.
 
@@ -81,8 +81,68 @@ def file_encrypt(file_id: str, filename: str):
         file_id (str): To identify the file when reading and decrypting.
         filename (str): The file path to encrypt.
     """
-    raise NotImplementedError()
     filemanager.encrypt(file_id, filename)
+
+
+@app.command()
+@exception_handler
+def read_file(file_id: str):
+    """
+    Read the contents of an encrypted file.
+
+    Args:
+        file_id (str): To identify the file when reading and decrypting.
+    """
+    filemanager.read(file_id)
+
+
+@app.command()
+@exception_handler
+def change_file(file_id: str):
+    """
+    Change the contents of an encrypted file.
+
+    Args:
+        file_id (str): To identify the file when reading and decrypting.
+    """
+    filemanager.open(file_id)
+
+
+@app.command()
+@exception_handler
+def delete_file(file_id: str):
+    """
+    Delete an enctypted file from the vault.
+
+    Args:
+        file_id (str): File id.
+    """
+    filemanager.delete(file_id)
+
+
+@app.command()
+@exception_handler
+def export_file(file_id: str, output: str):
+    """
+    Export the contents of an encrypted file back to it's original format.
+
+    Args:
+        file_id (str): To identify the file when reading and decrypting.
+        output (str): The new file name (path).
+    """
+    filemanager.export(file_id, output)
+
+
+@app.command()
+@exception_handler
+def export_all_files(output: str):
+    """
+    Export ALL encrypted files in OniLock to a zip file.
+
+    Args:
+        output (str): The name of the zip file that will contain all files.
+    """
+    filemanager.export(filename=output)
 
 
 @app.command("list")

@@ -126,7 +126,7 @@ def get_passphrase() -> str:
         return stored_key
 
     # Generate and store the key securely
-    password = generate_random_password(25)
+    password = generate_random_password(25, include_special_characters=False)
     keystore.set_password(key_name, password)
 
     return password
