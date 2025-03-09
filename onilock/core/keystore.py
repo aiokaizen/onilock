@@ -55,10 +55,8 @@ class KeyRing(KeyStore):
     """
 
     def __init__(self, keystore_id: str) -> None:
-        backend = keyring.get_keyring()
-        if backend is None or backend.name.lower() == "fail Keyring":
-            raise KeyRingBackendNotAvailable("No keyring backend is available.")
-
+        # This line raises an error if the backend is not available.
+        keyring.get_password("onilock", "x")
         super().__init__(keystore_id)
 
     def clear(self):
@@ -166,7 +164,7 @@ class KeyStoreManager:
         if default_backend == KeyStoreBackendEnum.KEYRING.value:
             try:
                 self.keystore = KeyRing(keystore_id)
-            except KeyRingBackendNotAvailable:
+            except Exception:
                 self.keystore = VaultKeyStore(keystore_id)
         elif default_backend == KeyStoreBackendEnum.VAULT.value:
             self.keystore = VaultKeyStore(keystore_id)
