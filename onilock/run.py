@@ -10,6 +10,7 @@ from onilock.account_manager import (
     delete_profile,
     initialize,
     list_accounts,
+    list_files,
     remove_account,
     new_account,
 )
@@ -122,7 +123,7 @@ def delete_file(file_id: str):
 
 @app.command()
 @exception_handler
-def export_file(file_id: str, output: str):
+def export_file(file_id: str, output: Optional[str] = None):
     """
     Export the contents of an encrypted file back to it's original format.
 
@@ -135,14 +136,27 @@ def export_file(file_id: str, output: str):
 
 @app.command()
 @exception_handler
-def export_all_files(output: str):
+def export_all_files(output: Optional[str] = None):
     """
     Export ALL encrypted files in OniLock to a zip file.
 
     Args:
         output (str): The name of the zip file that will contain all files.
     """
-    filemanager.export(filename=output)
+    filemanager.export(file_path=output)
+
+
+@app.command()
+@exception_handler
+def export_vault(output: Optional[str] = None):
+    """
+    Export ALL encrypted files in OniLock to a zip file.
+
+    Args:
+        output (str): The name of the zip file that will contain all files.
+    """
+    raise NotImplementedError()
+    filemanager.export(file_path=output)
 
 
 @app.command("list")
@@ -151,6 +165,14 @@ def accounts():
     """List all available accounts."""
 
     return list_accounts()
+
+
+@app.command("list-files")
+@exception_handler
+def list_all_files():
+    """List all available files."""
+
+    return list_files()
 
 
 @app.command()

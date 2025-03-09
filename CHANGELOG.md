@@ -1,5 +1,12 @@
 # Version 1
 
+## v1.7.0
+- Implement file encryption capabilities.
+    - Possibility to encrypt any file in your system and add it to the vault.
+    - View, and Edit files directly in the vault without exposing them to external threats.
+    - Ability to export a single file or all files in the vault to a zip file.
+- Other bug fixes and improvements
+
 ## v1.6.2
 - Implement pre / post hooks for all commands.
 - Add is_weak_password attribute to Account model.

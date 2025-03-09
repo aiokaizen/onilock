@@ -1,6 +1,6 @@
 [project]
 name = "onilock"
-version = "1.6.2"
+version = "1.7.0"
 description = "Password Manager CLI"
 authors = [
     { name = "Mouad Kommir", email = "mouadkommir@gmail.com" }

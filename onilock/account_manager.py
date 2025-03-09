@@ -1,4 +1,5 @@
 from datetime import datetime
+from pathlib import Path
 import uuid
 import multiprocessing
 import os
@@ -21,8 +22,8 @@ from onilock.core.utils import (
     clear_clipboard_after_delay,
     generate_random_password,
     get_passphrase,
-    get_version,
     getlogin,
+    naive_utcnow,
 )
 from onilock.db import DatabaseManager
 from onilock.db.models import Profile, Account
@@ -99,7 +100,7 @@ def initialize(master_password: Optional[str] = None):
     name = settings.DB_NAME
 
     filename = generate_random_password(12, include_special_characters=False) + ".oni"
-    filepath = os.path.join(os.path.expanduser("~"), ".onilock", "vault", filename)
+    filepath = os.path.join(Path.home(), ".onilock", "vault", filename)
 
     db_manager = DatabaseManager(database_url=filepath, is_encrypted=True)
     engine = db_manager.get_engine()
@@ -135,6 +136,7 @@ def initialize(master_password: Optional[str] = None):
         name=name,
         master_password=b64_hashed_master_password,
         accounts=list(),
+        files=[],
     )
     engine.write(profile.model_dump())
 
@@ -202,7 +204,7 @@ def new_account(
         username=username or "",
         url=url,
         description=description,
-        created_at=int(datetime.now().timestamp()),
+        created_at=int(naive_utcnow().timestamp()),
     )
     profile.accounts.append(password_model)
     engine.write(profile.model_dump())
@@ -212,7 +214,7 @@ def new_account(
 
 @pre_post_hooks(pre_command, post_command)
 def list_accounts():
-    """List all available passwords."""
+    """List all available accounts."""
 
     engine = get_profile_engine()
     data = engine.read()
@@ -220,16 +222,41 @@ def list_accounts():
 
     typer.echo(f"Accounts list for {profile.name}")
 
-    for index, pwd in enumerate(profile.accounts):
-        created_date = datetime.fromtimestamp(pwd.created_at)
+    for index, account in enumerate(profile.accounts):
+        created_date = datetime.fromtimestamp(account.created_at)
         typer.echo(
             f"""
-=================== [{index + 1}] {pwd.id} ===================
+=================== [{index + 1}] {account.id} ===================
 
-          username: {pwd.username}
-          password: {pwd.encrypted_password[:15]}***{pwd.encrypted_password[-15:]}
-               url: {pwd.url}
-       description: {pwd.description}
+          username: {account.username}
+          password: {account.encrypted_password[:15]}***{account.encrypted_password[-15:]}
+               url: {account.url}
+       description: {account.description}
+     creation date: {created_date.strftime("%Y-%m-%d %H:%M:%S")}
+            """
+        )
+
+
+@pre_post_hooks(pre_command, post_command)
+def list_files():
+    """List all available files."""
+
+    engine = get_profile_engine()
+    data = engine.read()
+    profile = Profile(**data)
+
+    typer.echo(f"Files list for {profile.name}")
+
+    for file in profile.files:
+        created_date = datetime.fromtimestamp(file.created_at)
+        typer.echo(
+            f"""
+=================== {file.id} ===================
+
+       source file: {Path(file.src).name}
+              UUID: {Path(file.location).stem}
+             owner: {file.user}
+              host: {file.host}
      creation date: {created_date.strftime("%Y-%m-%d %H:%M:%S")}
             """
         )
@@ -310,7 +337,7 @@ def remove_account(name: str):
 @pre_post_hooks(pre_command, post_command)
 def delete_profile(master_password: str):
     """
-    Delete all profile accounts.
+    Delete all profile data.
 
     Args:
         master_password (str): Profile master password.
@@ -342,13 +369,7 @@ def delete_profile(master_password: str):
     passphrase = get_passphrase()
 
     # Delete keyrings
-    password_name = str(uuid.uuid5(uuid.NAMESPACE_DNS, getlogin())).split("-")[-1]
-    keystore.delete_password(password_name)
-
-    passphrase_name = str(uuid.uuid5(uuid.NAMESPACE_DNS, getlogin() + "_oni")).split(
-        "-"
-    )[-1]
-    keystore.delete_password(passphrase_name)
+    keystore.clear()
 
     # Delete PGP key
     delete_pgp_key(

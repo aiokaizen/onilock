@@ -19,6 +19,10 @@ class Account(BaseModel):
 class File(BaseModel):
     id: str = Field(description="File ID")
     location: str = Field(description="File Location")
+    created_at: int = Field(description="Creation date")
+    src: str = Field(description="Source File")
+    user: str = Field(description="Owner")
+    host: str = Field(description="Owner Host")
 
 
 class Profile(BaseModel):

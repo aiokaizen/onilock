@@ -2,8 +2,9 @@ import os
 import json
 import hashlib
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Optional, Set
 import uuid
+from abc import ABC, abstractmethod
 
 import keyring
 from Crypto.Cipher import AES
@@ -11,25 +12,35 @@ from Crypto.Random import get_random_bytes
 from Crypto.Util.Padding import pad, unpad
 
 from onilock.core.enums import KeyStoreBackendEnum
+from onilock.core.exceptions.exceptions import KeyRingBackendNotAvailable
 
 
-class KeyStore:
+class KeyStore(ABC):
     """Base KeyStore class interface."""
 
+    _passwords: Set[str] = set()
+
+    @abstractmethod
     def __init__(self, keystore_id: str) -> None:
         self.keystore_id = keystore_id
 
-    def clean(self):
-        raise NotImplementedError
+    @abstractmethod
+    def clear(self):
+        KeyStore._passwords.clear()
 
+    @abstractmethod
     def set_password(self, id: str, password: str) -> None:
-        raise NotImplementedError
+        KeyStore._passwords.add(id)
 
+    @abstractmethod
     def get_password(self, id: str) -> Optional[str]:
-        raise NotImplementedError
+        if id not in KeyStore._passwords:
+            KeyStore._passwords.add(id)
 
+    @abstractmethod
     def delete_password(self, id: str) -> None:
-        raise NotImplementedError
+        if id in KeyStore._passwords:
+            KeyStore._passwords.remove(id)
 
 
 class KeyRing(KeyStore):
@@ -44,23 +55,27 @@ class KeyRing(KeyStore):
     """
 
     def __init__(self, keystore_id: str) -> None:
-        # This raises an exception if the keyring is not supported.
-        keyring.set_password(keystore_id, "tmp_user", "x")
-        keyring.delete_password(keystore_id, "tmp_user")
+        backend = keyring.get_keyring()
+        if backend is None or backend.name.lower() == "fail Keyring":
+            raise KeyRingBackendNotAvailable("No keyring backend is available.")
 
-        # Call super init method.
         super().__init__(keystore_id)
 
-    def clean(self):
-        return NotImplementedError("Clearing is not implemented for `KeyRing`")
+    def clear(self):
+        for pwd in KeyRing._passwords:
+            keyring.delete_password(self.keystore_id, pwd)
+        super().clear()
 
     def set_password(self, id: str, password: str):
         keyring.set_password(self.keystore_id, id, password)
+        super().set_password(id, password)
 
     def get_password(self, id: str) -> Optional[str]:
+        super().get_password(id)
         return keyring.get_password(self.keystore_id, id)
 
     def delete_password(self, id: str):
+        super().delete_password(id)
         keyring.delete_password(self.keystore_id, id)
 
 
@@ -114,15 +129,18 @@ class VaultKeyStore(KeyStore):
         )
         Path(self.filename).write_bytes(iv_data)
 
-    def clean(self):
+    def clear(self):
         os.remove(self.filename)
+        super().clear()
 
     def set_password(self, id: str, password: str):
         data = self._read_keystore()
         data[id] = password
         self._write_keystore(data)
+        super().set_password(id, password)
 
     def get_password(self, id: str) -> Optional[str]:
+        super().get_password(id)
         data = self._read_keystore()
         return data.get(id)
 
@@ -130,9 +148,10 @@ class VaultKeyStore(KeyStore):
         data = self._read_keystore()
         data.pop(id)
         self._write_keystore(data)
+        super().delete_password(id)
 
 
-class KeyStoreManager(KeyStore):
+class KeyStoreManager:
     """A class manager for KeyStore interface."""
 
     keystore: KeyStore
@@ -147,10 +166,13 @@ class KeyStoreManager(KeyStore):
         if default_backend == KeyStoreBackendEnum.KEYRING.value:
             try:
                 self.keystore = KeyRing(keystore_id)
-            except Exception:
+            except KeyRingBackendNotAvailable:
                 self.keystore = VaultKeyStore(keystore_id)
         elif default_backend == KeyStoreBackendEnum.VAULT.value:
             self.keystore = VaultKeyStore(keystore_id)
+
+    def clear(self) -> None:
+        return self.keystore.clear()
 
     def set_password(self, id: str, password: str) -> None:
         return self.keystore.set_password(id, password)
