@@ -21,7 +21,7 @@ filemanager = FileEncryptionManager()
 
 @app.command()
 @exception_handler
-def init(
+def initialize_vault(
     master_password: Optional[str] = None,
 ):
     """
@@ -99,7 +99,7 @@ def read_file(file_id: str):
 
 @app.command()
 @exception_handler
-def change_file(file_id: str):
+def edit_file(file_id: str):
     """
     Change the contents of an encrypted file.
 
@@ -196,7 +196,7 @@ def copy(name: str):
 
 @app.command()
 @exception_handler
-def remove(name: str):
+def remove_account(name: str):
     """
     Remove an account.
 
@@ -208,7 +208,7 @@ def remove(name: str):
 
 @app.command()
 @exception_handler
-def generate(
+def generate_pwd(
     len: int = typer.Option(8, prompt="Enter password length"),
     special_chars: bool = typer.Option(True, prompt="Include special characters?"),
 ):
@@ -219,9 +219,9 @@ def generate(
     typer.echo(random_password)
 
 
-@app.command("clear")
+@app.command()
 @exception_handler
-def clear_user_data(
+def erase_user_data(
     master_password: str = typer.Option(
         prompt="Enter Account's master password.",
         hide_input=True,
@@ -244,22 +244,30 @@ def version():
     typer.echo(f"OniLock {v}")
 
 
-@app.command()
-@exception_handler
-def info():
-    """
-    Displays information and metadata about the user profile.
+# def version_callback(ctx: typer.Context, param: typer.CallbackParam):
+#     if ctx.resilient_parsing:
+#         return
+#     v = get_version()
+#     typer.echo(f"OniLock {v}")
+#     return None
 
-    e.g.
-        - Profile name
-        - Creation time
-        - Vault version
-        - OniLock version
-        - Number of stored passwords
-        - Master password hash
-        - Number and list of Weak passwords
-    """
-    raise NotImplementedError()
+
+# @app.command()
+# @exception_handler
+# def info():
+#     """
+#     Displays information and metadata about the user profile.
+#
+#     e.g.
+#         - Profile name
+#         - Creation time
+#         - Vault version
+#         - OniLock version
+#         - Number of stored passwords
+#         - Master password hash
+#         - Number and list of Weak passwords
+#     """
+#     raise NotImplementedError()
 
 
 @app.command()
@@ -272,6 +280,22 @@ def export(dist: str = "."):
         dist (Optional[str]): The destination zip file path. Defaults to current directory.
     """
     raise NotImplementedError()
+
+
+@app.callback()
+def main(
+    # version: bool = typer.Option(
+    #     None,
+    #     "--version",
+    #     "-v",
+    #     help="Show the current OniLock version and exit.",
+    #     is_eager=True,
+    #     callback=version_callback,
+    # ),
+):
+    """
+    OniLock - Secure Password Manager CLI.
+    """
 
 
 if __name__ == "__main__":
