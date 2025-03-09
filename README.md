@@ -116,6 +116,13 @@ Contributions are welcome! Feel free to submit issues and pull requests.
 
 ## 📝 Changelog
 
+### v1.7.0
+- Implement file encryption capabilities.
+    - Possibility to encrypt any file in your system and add it to the vault.
+    - View, and Edit files directly in the vault without exposing them to external threats.
+    - Ability to export a single file or all files in the vault to a zip file.
+- Other bug fixes and improvements
+
 ### v1.6.0
 - Fix some bugs.
 - Implement support for terminal-based distros.
@@ -132,11 +139,6 @@ Contributions are welcome! Feel free to submit issues and pull requests.
 - Clear clipboard after 25 seconds if it still contains the password.
 - Encrypt json files using PGP key instead of storing them as raw json file.
 - Detect file corruption and manipulation using checksums
-
-## v1.4.0
-- Publish the project under the Apache 2.0 license
-- Multiple refactoring
-- Big upgrade to README.md file.
 
 View full changelog history on `CHANGELOG.md` file.
 
