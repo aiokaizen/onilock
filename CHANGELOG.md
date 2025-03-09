@@ -5,6 +5,7 @@
     - Possibility to encrypt any file in your system and add it to the vault.
     - View, and Edit files directly in the vault without exposing them to external threats.
     - Ability to export a single file or all files in the vault to a zip file.
+- Introduce env.py to fix the circular import problem.
 - Other bug fixes and improvements
 
 ## v1.6.2

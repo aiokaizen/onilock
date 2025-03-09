@@ -3,8 +3,6 @@ import uuid
 from typing import Optional
 from pathlib import Path
 
-from dotenv import load_dotenv
-
 from onilock.core.constants import DEBUG_ENV_NAME
 from onilock.core.enums import DBBackEndEnum
 
@@ -25,17 +23,6 @@ class Settings:
 
         # OniLock vault directory
         self.VAULT_DIR = Path.home() / ".onilock" / "vault"
-
-        # Load environment variables if .env file is found.
-        env_filenames = [
-            # Order matters. envs in the bottom override envs in the top of the list.
-            Path.home() / ".onilock.env",
-            self.VAULT_DIR / ".env",
-            ".env",
-        ]
-        for filename in env_filenames:
-            if os.path.exists(filename):
-                load_dotenv(filename)
 
         self.DEBUG = False
         try:
