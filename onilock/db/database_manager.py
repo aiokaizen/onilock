@@ -29,6 +29,7 @@ class DatabaseManager:
         if not cls._instance:
             with cls._lock:
                 if not cls._instance:
+                    logger.debug("Creating the database manager singleton object.")
                     cls._instance = super().__new__(cls)
 
         return cls._instance
@@ -40,27 +41,28 @@ class DatabaseManager:
         is_encrypted: bool = False,
         encryption_backend: Optional[BaseEncryptionBackend] = None,
     ):
+        if getattr(self, "_initialized", False):
+            return
+
         # Initialize the database engine and session maker only once
-        if not getattr(self, "_initialized", False):
-            if not is_encrypted:
-                self._engines = {
-                    "default": create_engine(database_url),
-                }
-                self._initialized = True
-                logger.debug("Database initialized successfully.")
-            else:
-                self._engines = {
-                    "default": create_encrypted_engine(
-                        database_url, encryption_backend
-                    ),
-                }
-                self._initialized = True
-                logger.debug("Encrypted database initialized successfully.")
+        if not is_encrypted:
+            self._engines = {
+                "default": create_engine(database_url),
+            }
+            logger.debug("Database initialized successfully.")
+        else:
+            self._engines = {
+                "default": create_encrypted_engine(database_url, encryption_backend),
+            }
+            logger.debug("Encrypted database initialized successfully.")
+
+        self._initialized = True
 
     def get_engine(self, id: Optional[str] = None):
         if id:
             return self._engines[id]
 
+        logger.debug(f"Available engines: {list(self._engines.keys())}")
         return self._engines["default"]
 
     def add_engine(
@@ -71,14 +73,10 @@ class DatabaseManager:
         encryption_backend: Optional[BaseEncryptionBackend] = None,
     ):
         if id in self._engines:
-            raise DatabaseEngineAlreadyExistsException(id)
+            return self._engines[id]
 
         if is_encrypted:
-            self._engines = {
-                id: create_encrypted_engine(db_url, encryption_backend),
-            }
+            self._engines[id] = create_encrypted_engine(db_url, encryption_backend)
         else:
-            self._engines = {
-                id: create_engine(db_url),
-            }
+            self._engines[id] = create_engine(db_url)
         return self._engines[id]

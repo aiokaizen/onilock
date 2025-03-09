@@ -2,6 +2,10 @@ class BaseException(Exception):
     pass
 
 
+class KeyRingBackendNotAvailable(BaseException):
+    pass
+
+
 class EncryptionKeyNotFoundError(BaseException):
     pass
 
