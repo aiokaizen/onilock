@@ -13,13 +13,14 @@ from onilock.core.constants import DEBUG_ENV_NAME, TRUTHFUL_STR
 # @TODO: Change logs directory to /var/log/onilock
 LOGS_DIR = Path("/tmp/logs/onilock")
 
-DEBUG = os.environ.get(DEBUG_ENV_NAME, "false") in TRUTHFUL_STR
+# DEBUG = os.environ.get(DEBUG_ENV_NAME, "false") in TRUTHFUL_STR
+DEBUG = True
 
 
 class LoggingManager:
     def __init__(
         self,
-        name: str = "faslava.logging.LoggingManager",
+        name: str = "onilock.logging.LoggingManager",
         default_level: int = logging.INFO,
     ):
         """
