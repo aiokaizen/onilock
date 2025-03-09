@@ -2,6 +2,7 @@ from typing import Optional
 
 import typer
 
+from onilock.core import env
 from onilock.core.decorators import exception_handler
 from onilock.core.utils import generate_random_password, get_version
 from onilock.filemanager import FileEncryptionManager
@@ -14,6 +15,7 @@ from onilock.account_manager import (
     remove_account,
     new_account,
 )
+
 
 app = typer.Typer()
 filemanager = FileEncryptionManager()
