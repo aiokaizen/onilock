@@ -1,6 +1,6 @@
 [project]
 name = "onilock"
-version = "1.7.1"
+version = "1.7.2"
 description = "Password Manager CLI"
 authors = [
     { name = "Mouad Kommir", email = "mouadkommir@gmail.com" }
@@ -48,4 +48,19 @@ build-backend = "poetry.core.masonry.api"
 build = "^1.2.2.post1"
 black = "^25.1.0"
 twine = "^6.1.0"
+pytest = "^8.0"
+pytest-cov = "^6.0"
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--cov=onilock --cov-report=term-missing --cov-fail-under=95"
+
+[tool.coverage.run]
+omit = ["tests/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+]
