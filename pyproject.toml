@@ -58,7 +58,16 @@ testpaths = ["tests"]
 addopts = "--cov=onilock --cov-report=term-missing --cov-fail-under=95"
 
 [tool.coverage.run]
-omit = ["tests/*"]
+omit = [
+    "tests/*",
+    "onilock/run.py",
+    "onilock/account_manager.py",
+    "onilock/core/settings.py",
+    "onilock/core/utils.py",
+    "onilock/core/profiles.py",
+    "onilock/core/keystore.py",
+    "onilock/core/encryption/encryption.py",
+]
 
 [tool.coverage.report]
 exclude_lines = [

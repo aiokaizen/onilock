@@ -36,7 +36,7 @@ class FileEncryptionManager:
 
     def __init__(self, gpg_home: Optional[str] = None) -> None:
         home = gpg_home or settings.GPG_HOME
-        if home:
+        if home and gpg_home is None:
             try:
                 os.makedirs(home, exist_ok=True)
                 os.chmod(home, 0o700)
@@ -193,9 +193,14 @@ class FileEncryptionManager:
 
         readonly_args = ["-R", "-m"] if readonly else []
 
-        with tempfile.NamedTemporaryFile(
-            mode="rb+", delete=False, dir="/dev/shm"
-        ) as tmp:
+        try:
+            tmp = tempfile.NamedTemporaryFile(
+                mode="rb+", delete=False, dir="/dev/shm"
+            )
+        except (PermissionError, FileNotFoundError):
+            tmp = tempfile.NamedTemporaryFile(mode="rb+", delete=False)
+
+        with tmp:
             tmp.write(decrypted_data)
             tmp.flush()
             tmp_path = tmp.name
