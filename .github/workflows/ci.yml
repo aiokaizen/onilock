@@ -1,17 +1,19 @@
 # Author:      Mouad KOMMIR <mouadkommir@gmail.com>
-# Description: Build and publish OniLock to PyPI when a new release is created
+# Description: Run the test suite on every push and pull request targeting master
 
-name: Publish OniLock to PyPI
+name: CI
 
 on:
-  release:
-    types: [published]
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
 
 permissions:
   contents: read
 
 jobs:
-  test-and-build:
+  test:
     runs-on: ubuntu-latest
 
     steps:
@@ -46,35 +48,3 @@ jobs:
 
       - name: Run tests
         run: poetry run python -m pytest tests/
-
-      - name: Build release distributions
-        run: poetry build
-
-      - name: Upload distributions
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-dists
-          path: dist/
-
-  pypi-publish:
-    runs-on: ubuntu-latest
-    needs:
-      - test-and-build
-    permissions:
-      id-token: write
-
-    environment:
-      name: pypi
-      url: https://pypi.org/project/onilock/${{ github.event.release.name }}
-
-    steps:
-      - name: Retrieve release distributions
-        uses: actions/download-artifact@v4
-        with:
-          name: release-dists
-          path: dist/
-
-      - name: Publish release distributions to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          packages-dir: dist/
