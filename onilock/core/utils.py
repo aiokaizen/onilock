@@ -89,6 +89,40 @@ def generate_random_password(
     return "".join(password)
 
 
+def is_password_strong(password: str) -> bool:
+    """
+    Basic strength check for passwords.
+
+    Strong if it has enough length and character variety.
+    """
+    if not password:
+        return False
+
+    length = len(password)
+    if length < 12:
+        return False
+    if password.strip() != password:
+        return False
+
+    has_lower = any(c.islower() for c in password)
+    has_upper = any(c.isupper() for c in password)
+    has_digit = any(c.isdigit() for c in password)
+    has_symbol = any(not c.isalnum() for c in password)
+    categories = sum([has_lower, has_upper, has_digit, has_symbol])
+
+    score = 0
+    if length >= 12:
+        score += 1
+    if length >= 16:
+        score += 1
+    if categories >= 3:
+        score += 1
+    if categories == 4:
+        score += 1
+
+    return score >= 3
+
+
 def generate_key() -> str:
     """
     Generate a random key to use as a project secret key for example.

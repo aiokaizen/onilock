@@ -1,5 +1,9 @@
 from typing import Optional
 import sys
+import json
+import base64
+import zipfile
+from pathlib import Path
 
 import typer
 from rich.panel import Panel
@@ -7,8 +11,10 @@ from rich.panel import Panel
 from onilock.core import env
 from onilock.core.decorators import exception_handler
 from onilock.core.ui import console
-from onilock.core.utils import generate_random_password, get_version
+from onilock.core.utils import generate_random_password, get_version, naive_utcnow
 from cryptography.fernet import Fernet
+from onilock.core.settings import settings
+from onilock.db.models import Profile
 from onilock.filemanager import FileEncryptionManager
 from onilock.account_manager import (
     copy_account_password,
@@ -161,11 +167,117 @@ def export_all_files(output: Optional[str] = None):
 
 @app.command()
 @exception_handler
-def export_vault(output: Optional[str] = None):
+def export_vault(
+    output: Optional[str] = None,
+    passwords: bool = typer.Option(
+        True, "--passwords/--no-passwords", help="Include passwords export."
+    ),
+    files: bool = typer.Option(
+        True, "--files/--no-files", help="Include files export."
+    ),
+):
     """
     Export the entire OniLock vault (accounts + files).
     """
-    raise NotImplementedError()
+    engine = get_profile_engine()
+    if not engine:
+        console.print(
+            "[bold red]✗[/bold red] Vault is not initialized. "
+            "Run [bold]onilock initialize-vault[/bold] first."
+        )
+        raise SystemExit(1)
+
+    data = engine.read()
+    if not data:
+        console.print(
+            "[bold red]✗[/bold red] Vault is not initialized. "
+            "Run [bold]onilock initialize-vault[/bold] first."
+        )
+        raise SystemExit(1)
+
+    profile = Profile(**data)
+    if not passwords and not files:
+        console.print(
+            "[bold red]✗[/bold red] Nothing to export. "
+            "Enable [bold]--passwords[/bold] and/or [bold]--files[/bold]."
+        )
+        raise SystemExit(1)
+
+    timestamp = naive_utcnow().strftime("%Y%m%d%H%M%S")
+    default_name = f"onilock_{profile.name}_vault_{timestamp}.zip"
+    output_path = Path(output) if output else Path(default_name)
+    if output_path.is_dir():
+        output_path = output_path / default_name
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    cipher = Fernet(settings.SECRET_KEY.encode())
+    accounts = []
+    if passwords:
+        for account in profile.accounts:
+            encrypted_password = account.encrypted_password
+            decrypted_password = cipher.decrypt(
+                base64.b64decode(encrypted_password)
+            ).decode()
+            accounts.append(
+                {
+                    "id": account.id,
+                    "username": account.username,
+                    "password": decrypted_password,
+                    "url": account.url,
+                    "description": account.description,
+                    "created_at": account.created_at,
+                    "is_weak_password": account.is_weak_password,
+                }
+            )
+
+    files_meta = []
+    used_names = set()
+
+    with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as zipf:
+        if passwords:
+            export_payload = {
+                "profile": {
+                    "name": profile.name,
+                    "vault_version": profile.vault_version,
+                    "creation_timestamp": profile.creation_timestamp,
+                },
+                "accounts": accounts,
+            }
+            zipf.writestr("accounts.json", json.dumps(export_payload, indent=2))
+
+        if files:
+            for file in profile.files:
+                src_name = Path(file.src).name or f"{file.id}.bin"
+                candidate = src_name
+                if candidate in used_names:
+                    candidate = f"{file.id}_{src_name}"
+                used_names.add(candidate)
+
+                try:
+                    content = filemanager.decrypt(file.id)
+                except Exception as exc:
+                    console.print(
+                        f"[bold yellow]![/bold yellow] Skipped file [bold]{file.id}[/bold]: {exc}"
+                    )
+                    continue
+
+                archive_path = str(Path("files") / candidate)
+                zipf.writestr(archive_path, content)
+                files_meta.append(
+                    {
+                        "id": file.id,
+                        "filename": candidate,
+                        "src": file.src,
+                        "user": file.user,
+                        "host": file.host,
+                        "created_at": file.created_at,
+                    }
+                )
+
+            if files_meta:
+                zipf.writestr("files.json", json.dumps(files_meta, indent=2))
+
+    console.print(f"[bold green]✓[/bold green] Exported vault to {output_path}")
 
 
 @app.command("list")
@@ -282,14 +394,22 @@ def version():
 
 @app.command()
 @exception_handler
-def export(dist: str = "."):
+def export(
+    dist: str = ".",
+    passwords: bool = typer.Option(
+        True, "--passwords/--no-passwords", help="Include passwords export."
+    ),
+    files: bool = typer.Option(
+        True, "--files/--no-files", help="Include files export."
+    ),
+):
     """
     Export all user data to an external zip file.
 
     Args:
         dist (str): Destination path. Defaults to current directory.
     """
-    raise NotImplementedError()
+    return export_vault(dist, passwords=passwords, files=files)
 
 
 @app.callback()

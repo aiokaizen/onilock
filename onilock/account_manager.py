@@ -26,6 +26,8 @@ from onilock.core.utils import (
     generate_random_password,
     get_passphrase,
     getlogin,
+    get_version,
+    is_password_strong,
     naive_utcnow,
 )
 from onilock.db import DatabaseManager
@@ -156,6 +158,7 @@ def initialize(master_password: Optional[str] = None):
     profile = Profile(
         name=name,
         master_password=b64_hashed_master_password,
+        vault_version=get_version(),
         accounts=list(),
         files=[],
     )
@@ -228,6 +231,7 @@ def new_account(
         username=username or "",
         url=url,
         description=description,
+        is_weak_password=not is_password_strong(password),
         created_at=int(naive_utcnow().timestamp()),
     )
     profile.accounts.append(password_model)
