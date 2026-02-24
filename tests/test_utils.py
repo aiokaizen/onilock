@@ -51,24 +51,16 @@ class TestNaiveUtcNow(unittest.TestCase):
 class TestClearClipboardAfterDelay(unittest.TestCase):
     @patch("onilock.core.utils.pyperclip")
     @patch("onilock.core.utils.time.sleep")
-    def test_clears_when_content_matches(self, mock_sleep, mock_pyperclip):
-        mock_pyperclip.paste.return_value = "mypassword"
-        clear_clipboard_after_delay("mypassword", delay=0)
+    def test_clears_without_readback(self, mock_sleep, mock_pyperclip):
+        clear_clipboard_after_delay(delay=0)
         mock_pyperclip.copy.assert_called_once_with("")
 
     @patch("onilock.core.utils.pyperclip")
     @patch("onilock.core.utils.time.sleep")
-    def test_does_not_clear_when_content_differs(self, mock_sleep, mock_pyperclip):
-        mock_pyperclip.paste.return_value = "different_content"
-        clear_clipboard_after_delay("mypassword", delay=0)
-        mock_pyperclip.copy.assert_not_called()
-
-    @patch("onilock.core.utils.pyperclip")
-    @patch("onilock.core.utils.time.sleep")
     def test_silences_exception(self, mock_sleep, mock_pyperclip):
-        mock_pyperclip.paste.side_effect = Exception("clipboard error")
+        mock_pyperclip.copy.side_effect = Exception("clipboard error")
         # Should not raise
-        clear_clipboard_after_delay("mypassword", delay=0)
+        clear_clipboard_after_delay(delay=0)
 
 
 class TestGetVersion(unittest.TestCase):

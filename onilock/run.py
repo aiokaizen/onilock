@@ -1,9 +1,13 @@
 from typing import Optional
 import sys
+import os
 import json
 import base64
 import zipfile
+import io
+import hashlib
 from pathlib import Path
+import gnupg
 
 import typer
 from rich.panel import Panel
@@ -14,8 +18,9 @@ from onilock.core.ui import console
 from onilock.core.utils import generate_random_password, get_version, naive_utcnow
 from cryptography.fernet import Fernet
 from onilock.core.settings import settings
-from onilock.db.models import Profile
-from onilock.filemanager import FileEncryptionManager
+from onilock.db.models import Profile, Account, File
+from onilock.db.engines import EncryptedJsonEngine
+from onilock.filemanager import FileEncryptionManager, get_output_filename
 from onilock.account_manager import (
     copy_account_password,
     delete_profile,
@@ -25,11 +30,58 @@ from onilock.account_manager import (
     list_files,
     remove_account as am_remove_account,
     new_account,
+    rotate_secret_key,
 )
+from onilock.core.profiles import list_profiles, set_active_profile, get_active_profile
+from onilock.core.audit import audit
+from onilock.core.gpg import get_pgp_key_info, delete_pgp_key
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.backends import default_backend
 
 
 app = typer.Typer()
+profiles_app = typer.Typer()
+keys_app = typer.Typer()
 filemanager = FileEncryptionManager()
+
+
+def _derive_export_key(passphrase: str, salt: bytes, iterations: int) -> bytes:
+    kdf = PBKDF2HMAC(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=salt,
+        iterations=iterations,
+        backend=default_backend(),
+    )
+    return base64.urlsafe_b64encode(kdf.derive(passphrase.encode()))
+
+
+def _encrypt_export(archive_bytes: bytes, passphrase: str) -> bytes:
+    salt = hashlib.sha256(os.urandom(32)).digest()[:16]
+    iterations = 200_000
+    key = _derive_export_key(passphrase, salt, iterations)
+    token = Fernet(key).encrypt(archive_bytes)
+    payload = {
+        "type": "onilock-export",
+        "version": 1,
+        "kdf": "pbkdf2-sha256",
+        "iterations": iterations,
+        "salt": base64.b64encode(salt).decode(),
+        "data": base64.b64encode(token).decode(),
+    }
+    return json.dumps(payload, indent=2).encode()
+
+
+def _decrypt_export(payload: bytes, passphrase: str) -> bytes:
+    data = json.loads(payload.decode())
+    if data.get("type") != "onilock-export":
+        raise ValueError("Unsupported export format")
+    salt = base64.b64decode(data["salt"])
+    iterations = int(data["iterations"])
+    token = base64.b64decode(data["data"])
+    key = _derive_export_key(passphrase, salt, iterations)
+    return Fernet(key).decrypt(token)
 
 
 @app.command()
@@ -45,6 +97,12 @@ def initialize_vault(
     """
 
     if not master_password:
+        if not sys.stdin.isatty():
+            console.print(
+                "[bold red]✗[/bold red] Master password is required in non-interactive mode. "
+                "Pass it explicitly with [bold]--master-password[/bold]."
+            )
+            raise SystemExit(1)
         console.print(
             Panel(
                 "[bold]Enter your master password below.[/bold]\n\n"
@@ -167,6 +225,169 @@ def export_all_files(output: Optional[str] = None):
 
 @app.command()
 @exception_handler
+def backup(
+    output: Optional[str] = None,
+    passphrase: Optional[str] = typer.Option(
+        None, "--passphrase", help="Passphrase to encrypt the backup."
+    ),
+):
+    """
+    Create an encrypted backup of the vault.
+    """
+    settings.BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    default_name = (
+        settings.BACKUP_DIR
+        / f"onilock_{settings.DB_NAME}_backup_{naive_utcnow().strftime('%Y%m%d%H%M%S')}.zip"
+    )
+    output_path = output or str(default_name)
+    export_vault(output=output_path, passwords=True, files=True, encrypt=True, passphrase=passphrase)
+
+
+@app.command()
+@exception_handler
+def restore(
+    path: str,
+    passphrase: Optional[str] = typer.Option(
+        None, "--passphrase", help="Passphrase to decrypt the backup."
+    ),
+    replace: bool = typer.Option(
+        False, "--replace/--merge", help="Replace existing vault data."
+    ),
+):
+    """
+    Restore a vault backup.
+    """
+    import_vault(path, passwords=True, files=True, verify=True, replace=replace, passphrase=passphrase)
+
+
+@app.command()
+@exception_handler
+def import_vault(
+    path: str,
+    passwords: bool = typer.Option(
+        True, "--passwords/--no-passwords", help="Import passwords."
+    ),
+    files: bool = typer.Option(True, "--files/--no-files", help="Import files."),
+    verify: bool = typer.Option(
+        True, "--verify/--no-verify", help="Verify checksums when available."
+    ),
+    replace: bool = typer.Option(
+        False, "--replace/--merge", help="Replace existing vault data."
+    ),
+    passphrase: Optional[str] = typer.Option(
+        None, "--passphrase", help="Passphrase for encrypted exports."
+    ),
+):
+    """
+    Import a vault export (zip or encrypted JSON export).
+    """
+    engine = get_profile_engine()
+    if not engine:
+        console.print(
+            "[bold red]✗[/bold red] Vault is not initialized. "
+            "Run [bold]onilock initialize-vault[/bold] first."
+        )
+        raise SystemExit(1)
+
+    payload = Path(path).read_bytes()
+    if payload[:1] == b"{":
+        if not passphrase:
+            if not sys.stdin.isatty():
+                console.print(
+                    "[bold red]✗[/bold red] Passphrase required in non-interactive mode. "
+                    "Provide [bold]--passphrase[/bold]."
+                )
+                raise SystemExit(1)
+            passphrase = typer.prompt("Export passphrase", hide_input=True)
+        payload = _decrypt_export(payload, passphrase)
+
+    with zipfile.ZipFile(io.BytesIO(payload)) as zipf:
+        names = set(zipf.namelist())
+        manifest = None
+        if "manifest.json" in names:
+            manifest = json.loads(zipf.read("manifest.json").decode())
+
+        if verify and manifest:
+            checksums = manifest.get("checksums", {})
+            for filename, digest in checksums.items():
+                if filename in names:
+                    actual = hashlib.sha256(zipf.read(filename)).hexdigest()
+                    if actual != digest:
+                        raise RuntimeError(f"Checksum mismatch for {filename}")
+
+        data = engine.read()
+        profile = Profile(**data)
+        if replace:
+            profile.accounts = []
+            profile.files = []
+
+        if passwords and "accounts.json" in names:
+            accounts_payload = json.loads(zipf.read("accounts.json").decode())
+            accounts = accounts_payload.get("accounts", [])
+            cipher = Fernet(settings.SECRET_KEY.encode())
+            for account in accounts:
+                account_id = account["id"]
+                if profile.get_account(account_id):
+                    console.print(
+                        f"[bold yellow]![/bold yellow] Skipping existing account [bold]{account_id}[/bold]"
+                    )
+                    continue
+                encrypted_password = cipher.encrypt(account["password"].encode())
+                profile.accounts.append(
+                    Account(
+                        id=account_id,
+                        encrypted_password=base64.b64encode(encrypted_password).decode(),
+                        username=account.get("username", ""),
+                        url=account.get("url"),
+                        description=account.get("description"),
+                        created_at=account.get("created_at", int(naive_utcnow().timestamp())),
+                        is_weak_password=account.get("is_weak_password", False),
+                    )
+                )
+
+        if files and "files.json" in names:
+            files_meta = json.loads(zipf.read("files.json").decode())
+            for file in files_meta:
+                file_id = file["id"]
+                if profile.get_file(file_id):
+                    console.print(
+                        f"[bold yellow]![/bold yellow] Skipping existing file [bold]{file_id}[/bold]"
+                    )
+                    continue
+                filename = file["filename"]
+                archive_path = str(Path("files") / filename)
+                if archive_path not in names:
+                    console.print(
+                        f"[bold yellow]![/bold yellow] Missing file data for [bold]{file_id}[/bold]"
+                    )
+                    continue
+                content = zipf.read(archive_path)
+                if verify and "sha256" in file:
+                    actual = hashlib.sha256(content).hexdigest()
+                    if actual != file["sha256"]:
+                        raise RuntimeError(f"Checksum mismatch for file {file_id}")
+
+                output_filename = get_output_filename(file_id)
+                output_path = settings.VAULT_DIR / output_filename
+                filemanager.encrypt_bytes(content, output_path)
+                profile.files.append(
+                    File(
+                        id=file_id,
+                        location=str(output_path.absolute()),
+                        created_at=file.get("created_at", int(naive_utcnow().timestamp())),
+                        src=file.get("src", filename),
+                        user=file.get("user", ""),
+                        host=file.get("host", ""),
+                    )
+                )
+
+        engine.write(profile.model_dump())
+        console.print("[bold green]✓[/bold green] Import completed.")
+        audit("vault.imported", source=path, passwords=passwords, files=files, replace=replace)
+
+
+@app.command()
+@exception_handler
 def export_vault(
     output: Optional[str] = None,
     passwords: bool = typer.Option(
@@ -174,6 +395,12 @@ def export_vault(
     ),
     files: bool = typer.Option(
         True, "--files/--no-files", help="Include files export."
+    ),
+    encrypt: bool = typer.Option(
+        False, "--encrypt/--no-encrypt", help="Encrypt export with a passphrase."
+    ),
+    passphrase: Optional[str] = typer.Option(
+        None, "--passphrase", help="Passphrase used to encrypt the export."
     ),
 ):
     """
@@ -233,17 +460,27 @@ def export_vault(
     files_meta = []
     used_names = set()
 
-    with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as zipf:
+    archive_buffer = io.BytesIO()
+    with zipfile.ZipFile(archive_buffer, "w", zipfile.ZIP_DEFLATED) as zipf:
+        manifest = {
+            "profile": {
+                "name": profile.name,
+                "vault_version": profile.vault_version,
+                "creation_timestamp": profile.creation_timestamp,
+            },
+            "exported_at": naive_utcnow().isoformat(),
+            "options": {"passwords": passwords, "files": files},
+            "checksums": {},
+        }
+
         if passwords:
             export_payload = {
-                "profile": {
-                    "name": profile.name,
-                    "vault_version": profile.vault_version,
-                    "creation_timestamp": profile.creation_timestamp,
-                },
+                "profile": manifest["profile"],
                 "accounts": accounts,
             }
-            zipf.writestr("accounts.json", json.dumps(export_payload, indent=2))
+            accounts_json = json.dumps(export_payload, indent=2).encode()
+            zipf.writestr("accounts.json", accounts_json)
+            manifest["checksums"]["accounts.json"] = hashlib.sha256(accounts_json).hexdigest()
 
         if files:
             for file in profile.files:
@@ -271,13 +508,43 @@ def export_vault(
                         "user": file.user,
                         "host": file.host,
                         "created_at": file.created_at,
+                        "sha256": hashlib.sha256(content).hexdigest(),
                     }
                 )
 
             if files_meta:
-                zipf.writestr("files.json", json.dumps(files_meta, indent=2))
+                files_json = json.dumps(files_meta, indent=2).encode()
+                zipf.writestr("files.json", files_json)
+                manifest["checksums"]["files.json"] = hashlib.sha256(files_json).hexdigest()
+
+        if settings.AUDIT_LOG.exists():
+            audit_data = settings.AUDIT_LOG.read_bytes()
+            zipf.writestr("audit.log", audit_data)
+            manifest["checksums"]["audit.log"] = hashlib.sha256(audit_data).hexdigest()
+
+        manifest_json = json.dumps(manifest, indent=2).encode()
+        zipf.writestr("manifest.json", manifest_json)
+
+    archive_bytes = archive_buffer.getvalue()
+    if encrypt:
+        if not passphrase:
+            if not sys.stdin.isatty():
+                console.print(
+                    "[bold red]✗[/bold red] Passphrase required in non-interactive mode. "
+                    "Provide [bold]--passphrase[/bold]."
+                )
+                raise SystemExit(1)
+            passphrase = typer.prompt(
+                "Export passphrase", hide_input=True, confirmation_prompt=True
+            )
+        encrypted_payload = _encrypt_export(archive_bytes, passphrase)
+        output_path = output_path.with_suffix(".onilock-export.json")
+        output_path.write_bytes(encrypted_payload)
+    else:
+        output_path.write_bytes(archive_bytes)
 
     console.print(f"[bold green]✓[/bold green] Exported vault to {output_path}")
+    audit("vault.exported", output=str(output_path), passwords=passwords, files=files, encrypted=encrypt)
 
 
 @app.command("list")
@@ -296,6 +563,29 @@ def list_all_files():
     return list_files()
 
 
+@profiles_app.command("list")
+def profiles_list():
+    """List known profiles."""
+    profiles = list_profiles()
+    active = get_active_profile()
+    if not profiles:
+        console.print("[bold yellow]![/bold yellow] No profiles registered yet.")
+        return
+    for name in profiles:
+        marker = " (active)" if active == name else ""
+        console.print(f"- {name}{marker}")
+
+
+@profiles_app.command("use")
+def profiles_use(name: str):
+    """Set the active profile for future commands."""
+    set_active_profile(name)
+    console.print(
+        f"[bold green]✓[/bold green] Active profile set to [bold]{name}[/bold]. "
+        "Restart the command to use it."
+    )
+
+
 @app.command()
 @exception_handler
 def copy(name: str):
@@ -310,6 +600,53 @@ def copy(name: str):
     except ValueError:
         pass
     return copy_account_password(account_id)
+
+
+@keys_app.command("list")
+def keys_list():
+    """List GPG keys and the active vault secret key id."""
+    gpg = gnupg.GPG(gnupghome=settings.GPG_HOME)
+    secret_keys = gpg.list_keys(secret=True)
+    if not secret_keys:
+        console.print("[bold yellow]![/bold yellow] No GPG secret keys found.")
+    else:
+        console.print("[bold]GPG Secret Keys[/bold]")
+        for key in secret_keys:
+            uid = key.get("uids", ["unknown"])[0]
+            console.print(f"- {uid} ({key.get('fingerprint', 'n/a')})")
+
+    active = get_pgp_key_info(settings.GPG_HOME, real_name=settings.PGP_REAL_NAME)
+    if active:
+        console.print(
+            f"[bold]Active GPG Key[/bold]: {settings.PGP_REAL_NAME} ({active.get('fingerprint', 'n/a')})"
+        )
+    else:
+        console.print("[bold yellow]![/bold yellow] Active GPG key not found.")
+
+
+@keys_app.command("delete")
+def keys_delete(name: Optional[str] = None, key_id: Optional[str] = None):
+    """Delete a GPG key by name or key id."""
+    if not name and not key_id:
+        console.print("[bold red]✗[/bold red] Provide --name or --key-id.")
+        raise SystemExit(1)
+    target = name or key_id
+    typer.confirm(f"Delete GPG key '{target}'?", abort=True)
+    delete_pgp_key(
+        passphrase=settings.PASSPHRASE,
+        gpg_home=settings.GPG_HOME,
+        real_name=name,
+        key_id=key_id,
+    )
+    console.print("[bold green]✓[/bold green] Key deleted.")
+    audit("keys.gpg.deleted", name=name, key_id=key_id)
+
+
+@keys_app.command("rotate-secret")
+def keys_rotate_secret():
+    """Rotate the vault secret key used for password encryption."""
+    rotate_secret_key()
+    console.print("[bold green]✓[/bold green] Vault secret key rotated.")
 
 
 @app.command()
@@ -342,6 +679,65 @@ def generate_pwd(
             border_style="cyan",
         )
     )
+
+
+@app.command()
+@exception_handler
+def doctor():
+    """
+    Diagnose environment and configuration issues.
+    """
+    checks = []
+
+    # Vault dir
+    checks.append(
+        ("Vault dir writable", os.access(settings.VAULT_DIR, os.W_OK))
+    )
+
+    # GPG home
+    if settings.GPG_HOME:
+        checks.append(("GPG home writable", os.access(settings.GPG_HOME, os.W_OK)))
+    else:
+        checks.append(("GPG home configured", False))
+
+    # GPG binary
+    try:
+        import subprocess
+
+        subprocess.run(["gpg", "--version"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        checks.append(("gpg installed", True))
+    except Exception:
+        checks.append(("gpg installed", False))
+
+    # gpg-agent
+    try:
+        import subprocess
+
+        subprocess.run(["gpgconf", "--launch", "gpg-agent"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        checks.append(("gpg-agent running", True))
+    except Exception:
+        checks.append(("gpg-agent running", False))
+
+    # Keyring backend
+    try:
+        import keyring
+
+        keyring.get_password("onilock", "doctor")
+        checks.append(("keyring backend available", True))
+    except Exception:
+        checks.append(("keyring backend available", False))
+
+    # Clipboard
+    try:
+        from onilock.core.utils import clipboard_available
+
+        checks.append(("clipboard available", clipboard_available() and settings.CLIPBOARD_ENABLED))
+    except Exception:
+        checks.append(("clipboard available", False))
+
+    for label, ok in checks:
+        status = "[bold green]OK[/bold green]" if ok else "[bold red]FAIL[/bold red]"
+        console.print(f"{status} {label}")
 
 
 @app.command()
@@ -380,16 +776,63 @@ def erase_user_data(
 
 @app.command()
 @exception_handler
-def version():
+def version(
+    vault_format: bool = typer.Option(
+        False, "--vault-format", help="Print the vault format version."
+    ),
+):
     """Print the current OniLock version."""
+    if vault_format:
+        return vault_format_cmd()
+
     v = get_version()
+    fmt = _get_vault_format()
+    created_with = _get_vault_created_version()
+    lines = [f"[bold]OniLock[/bold] [cyan]{v}[/cyan]"]
+    lines.append(f"[dim]Vault format:[/dim] {fmt}")
+    if created_with:
+        lines.append(f"[dim]Vault created with:[/dim] {created_with}")
+
     console.print(
         Panel(
-            f"[bold]OniLock[/bold] [cyan]{v}[/cyan]",
+            "\n".join(lines),
             border_style="dim",
             expand=False,
         )
     )
+
+
+@app.command("vault-format")
+@exception_handler
+def _get_vault_format() -> str:
+    engine = get_profile_engine()
+    if not engine:
+        return "v2 (default for new vaults)"
+
+    setup_path = Path(settings.SETUP_FILEPATH)
+    if not setup_path.exists():
+        return "v2 (default for new vaults)"
+
+    raw = setup_path.read_bytes()
+    if raw.startswith(EncryptedJsonEngine.V2_HEADER):
+        return "v2 (AEAD AES-GCM)"
+    return "v1 (legacy GPG + checksum)"
+
+
+def _get_vault_created_version() -> Optional[str]:
+    engine = get_profile_engine()
+    if not engine:
+        return None
+    data = engine.read()
+    if not data:
+        return None
+    profile = Profile(**data)
+    return profile.vault_version or None
+
+
+def vault_format_cmd():
+    """Print the vault format version."""
+    console.print(_get_vault_format())
 
 
 @app.command()
@@ -402,6 +845,12 @@ def export(
     files: bool = typer.Option(
         True, "--files/--no-files", help="Include files export."
     ),
+    encrypt: bool = typer.Option(
+        False, "--encrypt/--no-encrypt", help="Encrypt export with a passphrase."
+    ),
+    passphrase: Optional[str] = typer.Option(
+        None, "--passphrase", help="Passphrase used to encrypt the export."
+    ),
 ):
     """
     Export all user data to an external zip file.
@@ -409,7 +858,7 @@ def export(
     Args:
         dist (str): Destination path. Defaults to current directory.
     """
-    return export_vault(dist, passwords=passwords, files=files)
+    return export_vault(dist, passwords=passwords, files=files, encrypt=encrypt, passphrase=passphrase)
 
 
 @app.callback()
@@ -418,6 +867,9 @@ def main():
     OniLock - Secure Password Manager CLI.
     """
 
+
+app.add_typer(profiles_app, name="profiles")
+app.add_typer(keys_app, name="keys")
 
 if __name__ == "__main__":
     app()

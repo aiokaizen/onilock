@@ -36,6 +36,7 @@ classifiers = [
     "Operating System :: MacOS :: MacOS X",
     "License :: OSI Approved :: Apache Software License",
 ]
+include = ["onilock/core/data/*.txt"]
 
 [project.scripts]
 onilock = "onilock.run:app"

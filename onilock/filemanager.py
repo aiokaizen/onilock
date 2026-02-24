@@ -13,6 +13,7 @@ from onilock.account_manager import get_profile_engine
 from onilock.core.constants import SECRET_FILENAME_PREFIX
 from onilock.core.settings import settings
 from onilock.core.logging_manager import logger
+from onilock.core.audit import audit
 from onilock.core.ui import success, error
 from onilock.core.utils import getlogin, naive_utcnow
 from onilock.db.engines import Engine
@@ -159,6 +160,7 @@ class FileEncryptionManager:
                 )
                 self.engine.write(self.profile.model_dump())
                 success(f"[bold]{file_id}[/bold] encrypted and stored in vault.")
+                audit("file.encrypted", file_id=file_id, src=src_file_abs_path)
             return encrypted_data
 
     def decrypt_bytes(self, data: bytes) -> bytes:
@@ -219,6 +221,7 @@ class FileEncryptionManager:
             self.profile.remove_file(file_id)
             self.engine.write(self.profile.model_dump())
             success(f"[bold]{file_id}[/bold] removed from vault.")
+            audit("file.deleted", file_id=file_id)
 
     def export(self, file_id: Optional[str] = None, file_path: Optional[str] = None):
         """
@@ -274,6 +277,7 @@ class FileEncryptionManager:
                     f.write(bin_data)
 
         success(f"All files exported to [bold]{output_file}[/bold]")
+        audit("files.exported", output=str(output_file))
 
     def clear(self):
         """Delete all encrypted files in the vault."""
