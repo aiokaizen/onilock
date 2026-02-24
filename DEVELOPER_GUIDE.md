@@ -51,6 +51,12 @@ poetry install --with dev
 
 This creates an isolated virtualenv (typically under `~/.cache/pypoetry/virtualenvs/`) and installs everything listed in `pyproject.toml`.
 
+Activate virtual environment
+
+```bash
+eval $(poetry env activate)
+```
+
 ---
 
 ## Running the Project
