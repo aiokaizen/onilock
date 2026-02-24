@@ -1,82 +1,493 @@
+"""Tests for onilock.account_manager."""
+
+import base64
 import os
-import uuid
-import json
 import unittest
-from unittest import TestCase
+from unittest.mock import MagicMock, patch, call
 
-import pyperclip
-import keyring
+import bcrypt
+from cryptography.fernet import Fernet
 
-from typer.testing import CliRunner
+from onilock.db.models import Account, File, Profile
+from onilock.core.utils import naive_utcnow
 
-from onilock.account_manager import (
-    initialize,
-    new_account,
-    list_accounts,
-    copy_account_password,
-    remove_account,
-)
-from onilock.core.logging_manager import logger
-from onilock.run import app
+# ---- Helpers ----------------------------------------------------------------
+
+TEST_MASTER_PASSWORD = "SuperSecureTestPassword123!"
+TEST_SECRET_KEY = os.environ["ONI_SECRET_KEY"]
 
 
-runner = CliRunner()
-TMP_DB_NAME = "tmp_user_profile"
-TMP_SETUP_FILEPATH = os.path.join("/", "tmp", ".onilock_test.json")
-TMP_PROFILE_FILEPATH = os.path.join("/", "tmp", ".onilock_profile_test.json")
-TMP_MASTER_PASSWORD = "very-strong-master-password"
-GENERATED_MASTER_PASSWORD_LENGTH = 25
+def _make_profile(with_account=False, with_file=False):
+    """Build a minimal Profile object for use in tests."""
+    hashed = bcrypt.hashpw(TEST_MASTER_PASSWORD.encode(), bcrypt.gensalt())
+    b64_hashed = base64.b64encode(hashed).decode()
+
+    accounts = []
+    if with_account:
+        cipher = Fernet(TEST_SECRET_KEY.encode())
+        encrypted = cipher.encrypt(b"mypassword")
+        b64_enc = base64.b64encode(encrypted).decode()
+        accounts = [
+            Account(
+                id="github",
+                encrypted_password=b64_enc,
+                username="testuser",
+                url="https://github.com",
+                description="Test account",
+                created_at=int(naive_utcnow().timestamp()),
+            )
+        ]
+
+    files = []
+    if with_file:
+        files = [
+            File(
+                id="doc1",
+                location="/vault/abc.oni",
+                created_at=int(naive_utcnow().timestamp()),
+                src="/home/user/document.txt",
+                user="testuser",
+                host="localhost",
+            )
+        ]
+
+    return Profile(
+        name="test_profile",
+        master_password=b64_hashed,
+        accounts=accounts,
+        files=files,
+    )
 
 
-class AccountManagerTests(TestCase):
-    """Primary test class for OniLock."""
+def _make_engine(profile: Profile = None, empty=False):
+    """Return a mock engine with canned read() output."""
+    engine = MagicMock()
+    if empty or profile is None:
+        engine.read.return_value = {}
+    else:
+        engine.read.return_value = profile.model_dump()
+    engine.write.return_value = None
+    return engine
 
-    def setUp(self):
-        """Set testing environment variables."""
-        os.environ["OL_SETUP_FILEPATH"] = TMP_SETUP_FILEPATH
-        os.environ["OL_DB_NAME"] = TMP_DB_NAME
 
-    # def tearDown(self):
-    #     """Cleanup the temporary environment variables."""
-    #     logger.debug("Tearing down")
-    #     setup_path = os.environ.pop("OL_SETUP_FILEPATH")
-    #     logger.debug(f"SETUP PATH: {setup_path}")
-    #     db_name = os.environ.pop("OL_DB_NAME")
-    #     logger.debug(f"DB NAME: {db_name}")
-    #     os.remove(TMP_SETUP_FILEPATH)
-    #     os.remove(TMP_PROFILE_FILEPATH)
-    #     key_name = str(uuid.uuid5(uuid.NAMESPACE_DNS, TMP_DB_NAME))
-    #     keyring.delete_password("onilock", key_name)
+# ---- Tests ------------------------------------------------------------------
 
-    def test_initialize(self):
-        """Test initialization."""
-        os.environ["OL_SETUP_FILEPATH"] = TMP_SETUP_FILEPATH
-        os.environ["OL_DB_NAME"] = TMP_DB_NAME
-        self.assertEqual(1, 1)
-        return
-        logger.debug("start initialization")
-        result = runner.invoke(
-            app,
-            [
-                "init",
-                f"--profile-name={TMP_DB_NAME}",
-                f"--filepath={TMP_PROFILE_FILEPATH}",
-                f"--master-password={TMP_MASTER_PASSWORD}",
-            ],
+
+class TestVerifyMasterPassword(unittest.TestCase):
+    def test_valid_password_returns_true(self):
+        profile = _make_profile()
+        engine = _make_engine(profile)
+
+        with patch("onilock.account_manager.get_profile_engine", return_value=engine):
+            from onilock.account_manager import verify_master_password
+
+            result = verify_master_password(TEST_MASTER_PASSWORD)
+
+        self.assertTrue(result)
+
+    def test_invalid_password_returns_false(self):
+        profile = _make_profile()
+        engine = _make_engine(profile)
+
+        with patch("onilock.account_manager.get_profile_engine", return_value=engine):
+            from onilock.account_manager import verify_master_password
+
+            result = verify_master_password("wrong_password")
+
+        self.assertFalse(result)
+
+    def test_uninitialized_db_exits(self):
+        engine = _make_engine(empty=True)
+
+        with patch("onilock.account_manager.get_profile_engine", return_value=engine):
+            from onilock.account_manager import verify_master_password
+
+            with self.assertRaises(SystemExit):
+                verify_master_password(TEST_MASTER_PASSWORD)
+
+
+class TestGetProfileEngine(unittest.TestCase):
+    def test_returns_engine(self):
+        # Setup: the setup engine read returns a setup dict with encrypted filepath
+        cipher = Fernet(TEST_SECRET_KEY.encode())
+        test_filepath = "/tmp/test_profile.oni"
+        encrypted_filepath = cipher.encrypt(test_filepath.encode())
+        b64_encrypted = base64.b64encode(encrypted_filepath).decode()
+
+        setup_data = {"test_profile": {"filepath": b64_encrypted}}
+
+        mock_setup_engine = MagicMock()
+        mock_setup_engine.read.return_value = setup_data
+
+        mock_db_manager = MagicMock()
+        mock_db_manager.get_engine.return_value = mock_setup_engine
+        mock_db_manager.add_engine.side_effect = lambda *args, **kwargs: MagicMock()
+
+        with patch(
+            "onilock.account_manager.DatabaseManager", return_value=mock_db_manager
+        ):
+            with patch("onilock.account_manager.settings") as ms:
+                ms.SECRET_KEY = TEST_SECRET_KEY
+                ms.SETUP_FILEPATH = "/tmp/setup.oni"
+                ms.DB_NAME = "test_profile"
+                from onilock.account_manager import get_profile_engine
+
+                result = get_profile_engine()
+
+        self.assertIsNotNone(result)
+
+
+class TestInitialize(unittest.TestCase):
+    def _run_initialize(self, master_password=None, already_initialized=False):
+        """Helper to run initialize() with mocked DatabaseManager."""
+        mock_data_engine = MagicMock()
+        mock_data_engine.read.return_value = (
+            {"existing": True} if already_initialized else {}
         )
 
-        # Assert result
-        print(result.output)
-        self.assertEqual(result.exit_code, 0)
+        mock_setup_engine = MagicMock()
+        mock_setup_engine.read.return_value = (
+            {"existing_profile": {}} if already_initialized else {}
+        )
 
-        # Verify files exists
-        self.assertTrue(os.path.exists(TMP_SETUP_FILEPATH))
-        self.assertTrue(os.path.exists(TMP_PROFILE_FILEPATH))
+        mock_db_manager = MagicMock()
+        mock_db_manager.get_engine.return_value = mock_data_engine
+        mock_db_manager.add_engine.return_value = mock_setup_engine
 
-        # Assert keyring is created
-        key_name = str(uuid.uuid5(uuid.NAMESPACE_DNS, TMP_DB_NAME))
-        stored_key = keyring.get_password("onilock", key_name)
-        self.assertIsNotNone(stored_key)
+        with patch(
+            "onilock.account_manager.DatabaseManager", return_value=mock_db_manager
+        ):
+            with patch("onilock.account_manager.settings") as ms:
+                ms.SECRET_KEY = TEST_SECRET_KEY
+                ms.SETUP_FILEPATH = "/tmp/setup_test.oni"
+                ms.DB_NAME = "test_new_profile"
+                from onilock.account_manager import initialize
+
+                return initialize(master_password)
+
+    def test_initialize_with_master_password_writes_profile(self):
+        mock_data_engine = MagicMock()
+        mock_data_engine.read.return_value = {}
+        mock_setup_engine = MagicMock()
+        mock_setup_engine.read.return_value = {}
+        mock_db_manager = MagicMock()
+        mock_db_manager.get_engine.return_value = mock_data_engine
+        mock_db_manager.add_engine.return_value = mock_setup_engine
+
+        with patch(
+            "onilock.account_manager.DatabaseManager", return_value=mock_db_manager
+        ):
+            with patch("onilock.account_manager.settings") as ms:
+                ms.SECRET_KEY = TEST_SECRET_KEY
+                ms.SETUP_FILEPATH = "/tmp/setup_test.oni"
+                ms.DB_NAME = "test_new_profile"
+                from onilock.account_manager import initialize
+
+                initialize(TEST_MASTER_PASSWORD)
+
+        mock_data_engine.write.assert_called_once()
+        mock_setup_engine.write.assert_called_once()
+
+    def test_initialize_without_master_password_generates_one(self):
+        mock_data_engine = MagicMock()
+        mock_data_engine.read.return_value = {}
+        mock_setup_engine = MagicMock()
+        mock_setup_engine.read.return_value = {}
+        mock_db_manager = MagicMock()
+        mock_db_manager.get_engine.return_value = mock_data_engine
+        mock_db_manager.add_engine.return_value = mock_setup_engine
+
+        with patch(
+            "onilock.account_manager.DatabaseManager", return_value=mock_db_manager
+        ):
+            with patch("onilock.account_manager.settings") as ms:
+                ms.SECRET_KEY = TEST_SECRET_KEY
+                ms.SETUP_FILEPATH = "/tmp/setup_test.oni"
+                ms.DB_NAME = "test_new_profile"
+                with patch("onilock.account_manager.typer.echo") as mock_echo:
+                    from onilock.account_manager import initialize
+
+                    initialize(None)
+
+        # Should echo the generated password
+        mock_echo.assert_called()
+
+    def test_initialize_already_initialized_exits(self):
+        mock_data_engine = MagicMock()
+        mock_data_engine.read.return_value = {"existing": True}  # Already has data
+        mock_setup_engine = MagicMock()
+        mock_setup_engine.read.return_value = {}
+        mock_db_manager = MagicMock()
+        mock_db_manager.get_engine.return_value = mock_data_engine
+        mock_db_manager.add_engine.return_value = mock_setup_engine
+
+        with patch(
+            "onilock.account_manager.DatabaseManager", return_value=mock_db_manager
+        ):
+            with patch("onilock.account_manager.settings") as ms:
+                ms.SECRET_KEY = TEST_SECRET_KEY
+                ms.SETUP_FILEPATH = "/tmp/setup_test.oni"
+                ms.DB_NAME = "test_new_profile"
+                from onilock.account_manager import initialize
+
+                with self.assertRaises(SystemExit):
+                    initialize(TEST_MASTER_PASSWORD)
+
+    def test_initialize_name_in_setup_data_exits(self):
+        mock_data_engine = MagicMock()
+        mock_data_engine.read.return_value = {}
+        mock_setup_engine = MagicMock()
+        # DB_NAME is already in setup data
+        mock_setup_engine.read.return_value = {"test_new_profile": {"filepath": "abc"}}
+        mock_db_manager = MagicMock()
+        mock_db_manager.get_engine.return_value = mock_data_engine
+        mock_db_manager.add_engine.return_value = mock_setup_engine
+
+        with patch(
+            "onilock.account_manager.DatabaseManager", return_value=mock_db_manager
+        ):
+            with patch("onilock.account_manager.settings") as ms:
+                ms.SECRET_KEY = TEST_SECRET_KEY
+                ms.SETUP_FILEPATH = "/tmp/setup_test.oni"
+                ms.DB_NAME = "test_new_profile"
+                from onilock.account_manager import initialize
+
+                with self.assertRaises(SystemExit):
+                    initialize(TEST_MASTER_PASSWORD)
+
+
+class TestNewAccount(unittest.TestCase):
+    def test_new_account_with_password(self):
+        profile = _make_profile()
+        engine = _make_engine(profile)
+
+        with patch("onilock.account_manager.get_profile_engine", return_value=engine):
+            with patch("onilock.account_manager.settings") as ms:
+                ms.SECRET_KEY = TEST_SECRET_KEY
+                from onilock.account_manager import new_account
+
+                new_account(
+                    "github", "mypassword", "user", "https://github.com", "desc"
+                )
+
+        engine.write.assert_called_once()
+
+    def test_new_account_without_password_generates_one(self):
+        profile = _make_profile()
+        engine = _make_engine(profile)
+
+        with patch("onilock.account_manager.get_profile_engine", return_value=engine):
+            with patch("onilock.account_manager.settings") as ms:
+                ms.SECRET_KEY = TEST_SECRET_KEY
+                from onilock.account_manager import new_account
+
+                new_account("github", None, "user", None, None)
+
+        engine.write.assert_called_once()
+
+    def test_new_account_uninitialized_db_exits(self):
+        engine = _make_engine(empty=True)
+
+        with patch("onilock.account_manager.get_profile_engine", return_value=engine):
+            with patch("onilock.account_manager.settings") as ms:
+                ms.SECRET_KEY = TEST_SECRET_KEY
+                from onilock.account_manager import new_account
+
+                with self.assertRaises(SystemExit):
+                    new_account("github", "pass", None, None, None)
+
+
+class TestListAccounts(unittest.TestCase):
+    def test_list_accounts_outputs(self):
+        profile = _make_profile(with_account=True)
+        engine = _make_engine(profile)
+
+        with patch("onilock.account_manager.get_profile_engine", return_value=engine):
+            with patch("onilock.account_manager.typer.echo") as mock_echo:
+                from onilock.account_manager import list_accounts
+
+                list_accounts()
+
+        mock_echo.assert_called()
+        # At least one call should contain the account id
+        all_output = " ".join(str(c) for c in mock_echo.call_args_list)
+        self.assertIn("github", all_output)
+
+    def test_list_accounts_empty(self):
+        profile = _make_profile()
+        engine = _make_engine(profile)
+
+        with patch("onilock.account_manager.get_profile_engine", return_value=engine):
+            with patch("onilock.account_manager.typer.echo"):
+                from onilock.account_manager import list_accounts
+
+                list_accounts()  # Should not raise
+
+
+class TestListFiles(unittest.TestCase):
+    def test_list_files_with_files(self):
+        profile = _make_profile(with_file=True)
+        engine = _make_engine(profile)
+
+        with patch("onilock.account_manager.get_profile_engine", return_value=engine):
+            with patch("onilock.account_manager.typer.echo") as mock_echo:
+                from onilock.account_manager import list_files
+
+                list_files()
+
+        mock_echo.assert_called()
+        all_output = " ".join(str(c) for c in mock_echo.call_args_list)
+        self.assertIn("doc1", all_output)
+
+    def test_list_files_empty(self):
+        profile = _make_profile()
+        engine = _make_engine(profile)
+
+        with patch("onilock.account_manager.get_profile_engine", return_value=engine):
+            with patch("onilock.account_manager.typer.echo"):
+                from onilock.account_manager import list_files
+
+                list_files()
+
+
+class TestCopyAccountPassword(unittest.TestCase):
+    def test_copy_valid_account_by_name(self):
+        profile = _make_profile(with_account=True)
+        engine = _make_engine(profile)
+
+        with patch("onilock.account_manager.get_profile_engine", return_value=engine):
+            with patch("onilock.account_manager.settings") as ms:
+                ms.SECRET_KEY = TEST_SECRET_KEY
+                with patch("onilock.account_manager.pyperclip.copy"):
+                    with patch("onilock.account_manager.multiprocessing.Process"):
+                        with patch("onilock.account_manager.os._exit"):
+                            from onilock.account_manager import copy_account_password
+
+                            copy_account_password("github")
+
+    def test_copy_valid_account_by_index(self):
+        profile = _make_profile(with_account=True)
+        engine = _make_engine(profile)
+
+        with patch("onilock.account_manager.get_profile_engine", return_value=engine):
+            with patch("onilock.account_manager.settings") as ms:
+                ms.SECRET_KEY = TEST_SECRET_KEY
+                with patch("onilock.account_manager.pyperclip.copy"):
+                    with patch("onilock.account_manager.multiprocessing.Process"):
+                        with patch("onilock.account_manager.os._exit"):
+                            from onilock.account_manager import copy_account_password
+
+                            copy_account_password(0)
+
+    def test_copy_invalid_account_exits(self):
+        profile = _make_profile()
+        engine = _make_engine(profile)
+
+        with patch("onilock.account_manager.get_profile_engine", return_value=engine):
+            with patch("onilock.account_manager.settings") as ms:
+                ms.SECRET_KEY = TEST_SECRET_KEY
+                from onilock.account_manager import copy_account_password
+
+                with self.assertRaises(SystemExit):
+                    copy_account_password("nonexistent")
+
+    def test_copy_uninitialized_db_exits(self):
+        engine = _make_engine(empty=True)
+
+        with patch("onilock.account_manager.get_profile_engine", return_value=engine):
+            with patch("onilock.account_manager.settings") as ms:
+                ms.SECRET_KEY = TEST_SECRET_KEY
+                from onilock.account_manager import copy_account_password
+
+                with self.assertRaises(SystemExit):
+                    copy_account_password("github")
+
+    def test_os_exit_called_after_clipboard_copy(self):
+        profile = _make_profile(with_account=True)
+        engine = _make_engine(profile)
+
+        with patch("onilock.account_manager.get_profile_engine", return_value=engine):
+            with patch("onilock.account_manager.settings") as ms:
+                ms.SECRET_KEY = TEST_SECRET_KEY
+                with patch("onilock.account_manager.pyperclip.copy") as mock_copy:
+                    with patch(
+                        "onilock.account_manager.multiprocessing.Process"
+                    ) as MockProc:
+                        mock_proc_inst = MagicMock()
+                        MockProc.return_value = mock_proc_inst
+                        with patch("onilock.account_manager.os._exit") as mock_exit:
+                            from onilock.account_manager import copy_account_password
+
+                            copy_account_password("github")
+
+        mock_copy.assert_called_once()
+        mock_exit.assert_called_once_with(0)
+        mock_proc_inst.start.assert_called_once()
+
+
+class TestRemoveAccount(unittest.TestCase):
+    def test_remove_valid_account(self):
+        profile = _make_profile(with_account=True)
+        engine = _make_engine(profile)
+
+        with patch("onilock.account_manager.get_profile_engine", return_value=engine):
+            from onilock.account_manager import remove_account
+
+            remove_account("github")
+
+        engine.write.assert_called_once()
+
+    def test_remove_invalid_account_exits(self):
+        profile = _make_profile()
+        engine = _make_engine(profile)
+
+        with patch("onilock.account_manager.get_profile_engine", return_value=engine):
+            from onilock.account_manager import remove_account
+
+            with self.assertRaises(SystemExit):
+                remove_account("nonexistent")
+
+    def test_remove_uninitialized_db_exits(self):
+        engine = _make_engine(empty=True)
+
+        with patch("onilock.account_manager.get_profile_engine", return_value=engine):
+            from onilock.account_manager import remove_account
+
+            with self.assertRaises(SystemExit):
+                remove_account("github")
+
+
+class TestDeleteProfile(unittest.TestCase):
+    def test_delete_valid_master_password(self):
+        profile = _make_profile()
+        engine = _make_engine(profile)
+
+        with patch("onilock.account_manager.get_profile_engine", return_value=engine):
+            with patch(
+                "onilock.account_manager.get_passphrase", return_value="passphrase"
+            ):
+                with patch("onilock.account_manager.keystore") as mock_ks:
+                    with patch("onilock.account_manager.delete_pgp_key"):
+                        with patch("onilock.account_manager.shutil.rmtree"):
+                            with patch("onilock.account_manager.settings") as ms:
+                                ms.GPG_HOME = "/tmp/gpg"
+                                ms.PGP_REAL_NAME = "test"
+                                ms.VAULT_DIR = "/tmp/vault"
+                                from onilock.account_manager import delete_profile
+
+                                delete_profile(TEST_MASTER_PASSWORD)
+
+        mock_ks.clear.assert_called_once()
+
+    def test_delete_invalid_master_password_exits(self):
+        profile = _make_profile()
+        engine = _make_engine(profile)
+
+        with patch("onilock.account_manager.get_profile_engine", return_value=engine):
+            from onilock.account_manager import delete_profile
+
+            with self.assertRaises(SystemExit):
+                delete_profile("wrong_password")
 
 
 if __name__ == "__main__":
