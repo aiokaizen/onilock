@@ -1,8 +1,11 @@
 import os
 import json
+import base64
 from pathlib import Path
 from typing import Any, Dict, Optional
 import hashlib
+
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from onilock.core.encryption.encryption import (
     BaseEncryptionBackend,
@@ -32,7 +35,14 @@ class EncryptedEngine:
         self, db_url: str, encryption_backend: Optional[BaseEncryptionBackend] = None
     ):
         self.db_url = db_url
-        self.encryption_backend = EncryptionBackendManager(encryption_backend)
+        self._encryption_backend = encryption_backend
+        self._encryption_manager: Optional[EncryptionBackendManager] = None
+
+    @property
+    def encryption_backend(self) -> EncryptionBackendManager:
+        if self._encryption_manager is None:
+            self._encryption_manager = EncryptionBackendManager(self._encryption_backend)
+        return self._encryption_manager
 
     def write(self, data: Any) -> None:
         raise NotImplementedError
@@ -69,7 +79,10 @@ class JsonEngine(Engine):
 
 
 class EncryptedJsonEngine(EncryptedEngine):
-    """PGP-Encrypted JSON Database Engine."""
+    """Versioned encrypted JSON database engine with AEAD v2 format."""
+
+    V2_HEADER = b"ONILOCK_V2\n"
+    V2_AAD = b"onilock-v2"
 
     def __init__(
         self, db_url: str, encryption_backend: Optional[BaseEncryptionBackend] = None
@@ -77,45 +90,46 @@ class EncryptedJsonEngine(EncryptedEngine):
         super().__init__(db_url, encryption_backend)
         self.filepath = db_url
 
+    def _serialize(self, data: Dict) -> bytes:
+        return json.dumps(data, sort_keys=True, separators=(",", ":")).encode()
+
+    def _write_v2(self, data: Dict) -> None:
+        payload = self._serialize(data)
+        key = base64.urlsafe_b64decode(settings.SECRET_KEY.encode())
+        nonce = os.urandom(12)
+        ciphertext = AESGCM(key).encrypt(nonce, payload, self.V2_AAD)
+        envelope = {
+            "version": 2,
+            "alg": "aesgcm",
+            "nonce": base64.b64encode(nonce).decode(),
+            "aad": base64.b64encode(self.V2_AAD).decode(),
+            "data": base64.b64encode(ciphertext).decode(),
+        }
+        data_bytes = self.V2_HEADER + json.dumps(envelope, sort_keys=True).encode()
+        Path(self.filepath).write_bytes(data_bytes)
+
     def write(self, data: Dict) -> None:
         """Encrypt data and write to file."""
         parent_dir = os.path.dirname(self.filepath)
         if parent_dir and not os.path.exists(parent_dir):
             os.makedirs(parent_dir)
 
-        # Serialize data to JSON string
-        json_data = json.dumps(data, indent=4)
+        self._write_v2(data)
 
-        # Generate checksum
-        checksum = hashlib.sha256(json_data.encode()).hexdigest()
-        logger.debug(f"Calculated checksum: {checksum}")
+    def _read_v2(self, data: bytes) -> Dict:
+        envelope = json.loads(data.decode())
+        if envelope.get("version") != 2 or envelope.get("alg") != "aesgcm":
+            raise ValueError("Unsupported vault format")
+        nonce = base64.b64decode(envelope["nonce"])
+        aad = base64.b64decode(envelope["aad"])
+        ciphertext = base64.b64decode(envelope["data"])
+        key = base64.urlsafe_b64decode(settings.SECRET_KEY.encode())
+        plaintext = AESGCM(key).decrypt(nonce, ciphertext, aad)
+        return json.loads(plaintext.decode())
 
-        # Encrypt data
-        encrypted_data = self.encryption_backend.encrypt(
-            f"{checksum}{settings.CHECKSUM_SEPARATOR}{json_data}",
-            always_trust=True,
-            armor=False,  # ← This is crucial to disable base64 encoding
-        )
-
-        if not encrypted_data.ok:
-            raise RuntimeError(f"Encryption failed: {encrypted_data.status}")
-
-        # Write encrypted data as binary
-        Path(self.filepath).write_bytes(encrypted_data.data)
-
-    def read(self) -> Dict:
-        """Read and decrypt data from file."""
-        filepath = Path(self.filepath)
-
-        if not filepath.exists():
-            logger.debug(f"File {filepath} does not exist. Returning an empty dict.")
-            return dict()
-
-        encrypted_data = filepath.read_bytes()
-
-        # Decrypt data
+    def _read_v1(self, encrypted_data: bytes) -> Dict:
+        # Decrypt data using legacy GPG backend
         decrypted_data = self.encryption_backend.decrypt(encrypted_data)
-
         if not decrypted_data.ok:
             raise RuntimeError(f"Decryption failed: {decrypted_data.status}")
 
@@ -130,6 +144,29 @@ class EncryptedJsonEngine(EncryptedEngine):
         # Verify file integrity
         current_checksum = hashlib.sha256(data.encode()).hexdigest()
         if current_checksum != stored_checksum:
+            from onilock.core.audit import audit
+
+            audit("vault.tamper_detected", filepath=str(self.filepath))
             raise RuntimeError("Data corruption detected! Checksum mismatch")
 
         return json.loads(data)
+
+    def read(self) -> Dict:
+        """Read and decrypt data from file."""
+        filepath = Path(self.filepath)
+
+        if not filepath.exists():
+            logger.debug(f"File {filepath} does not exist. Returning an empty dict.")
+            return dict()
+
+        raw = filepath.read_bytes()
+        if raw.startswith(self.V2_HEADER):
+            return self._read_v2(raw[len(self.V2_HEADER) :])
+
+        # Legacy v1: migrate on successful read.
+        data = self._read_v1(raw)
+        try:
+            self._write_v2(data)
+        except Exception:
+            pass
+        return data

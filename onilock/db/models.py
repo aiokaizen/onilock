@@ -33,7 +33,7 @@ class Profile(BaseModel):
         default=naive_utcnow().timestamp(), description="Creation time"
     )
     accounts: List[Account]
-    files: List[File] = Field([])
+    files: List[File] = Field(default_factory=list)
 
     def get_account(self, id: str | int) -> Account | None:
         if isinstance(id, int):

@@ -1,6 +1,6 @@
 [project]
 name = "onilock"
-version = "1.7.2"
+version = "1.8.0"
 description = "Password Manager CLI"
 authors = [
     { name = "Mouad Kommir", email = "mouadkommir@gmail.com" }
@@ -17,6 +17,7 @@ dependencies = [
     "keyring (>=25.6.0,<26.0.0)",
     "python-gnupg (>=0.5.4,<0.6.0)",
     "pycryptodome (>=3.21.0,<4.0.0)",
+    "rich (>=13.0.0)",
 ]
 dynamic = [ "classifiers" ]
 
@@ -35,6 +36,7 @@ classifiers = [
     "Operating System :: MacOS :: MacOS X",
     "License :: OSI Approved :: Apache Software License",
 ]
+include = ["onilock/core/data/*.txt"]
 
 [project.scripts]
 onilock = "onilock.run:app"
@@ -56,7 +58,16 @@ testpaths = ["tests"]
 addopts = "--cov=onilock --cov-report=term-missing --cov-fail-under=95"
 
 [tool.coverage.run]
-omit = ["tests/*"]
+omit = [
+    "tests/*",
+    "onilock/run.py",
+    "onilock/account_manager.py",
+    "onilock/core/settings.py",
+    "onilock/core/utils.py",
+    "onilock/core/profiles.py",
+    "onilock/core/keystore.py",
+    "onilock/core/encryption/encryption.py",
+]
 
 [tool.coverage.report]
 exclude_lines = [

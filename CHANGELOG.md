@@ -1,5 +1,26 @@
 # Version 1
 
+## v1.8.0
+- Introduce versioned AEAD vault format (v2, AES-GCM) with automatic legacy migration.
+- Add export/import encryption, audit logging, and backup/restore workflows.
+- Add profile management, key management commands, and environment diagnostics.
+- Harden master-password handling with rate limiting, lockouts, and KDF upgrades.
+- Add password health checks (entropy, reuse, common password detection) and improved clipboard hygiene.
+- Add Poweruser guide and expand documentation.
+
+## v1.7.3
+- Fix infinite recursion in `remove-account` CLI command caused by name shadowing between the CLI function and the imported business-logic function.
+- Fix `generate_random_password` producing `length + 3/4` characters instead of exactly `length` characters.
+- Fix encrypted temp file not being deleted from `/dev/shm` after `read-file` (readonly) or on any exception during `edit-file`.
+- Fix `strftime` format string using `%s` (Unix timestamp, non-portable) instead of `%S` (seconds) in exported vault filenames.
+- Fix `pre_post_hooks` decorator silently discarding the wrapped function's return value.
+- Fix `VaultKeyStore` reusing the same AES-CBC IV across writes, enabling ciphertext pattern analysis; now generates a fresh IV per write.
+- Fix `VaultKeyStore` deriving its AES key from the installation file path (predictable and attacker-reproducible); now generates a random 32-byte key stored in `~/.onilock/vault/.key` (mode 600).
+- Fix `pgp_key_exists` crashing with `TypeError` when a GPG key has no UIDs.
+- Fix `delete_pgp_key` crashing with `TypeError` when the target key does not exist; now raises `EncryptionKeyNotFoundError`.
+- Fix Pydantic `Field([])` mutable default shared across model instances; replaced with `Field(default_factory=list)`.
+- Expand test suite from 238 to 243 tests; add contract-based assertions replacing observed-behavior confirmations.
+
 ## v1.7.2
 - Introduce comprehensive test suite with 238 tests achieving 99%+ code coverage.
 - Migrate test runner from `unittest` to `pytest` with `pytest-cov`; enforce 95% coverage threshold on every run.
