@@ -1,5 +1,13 @@
 # Version 1
 
+## v1.8.0
+- Introduce versioned AEAD vault format (v2, AES-GCM) with automatic legacy migration.
+- Add export/import encryption, audit logging, and backup/restore workflows.
+- Add profile management, key management commands, and environment diagnostics.
+- Harden master-password handling with rate limiting, lockouts, and KDF upgrades.
+- Add password health checks (entropy, reuse, common password detection) and improved clipboard hygiene.
+- Add Poweruser guide and expand documentation.
+
 ## v1.7.3
 - Fix infinite recursion in `remove-account` CLI command caused by name shadowing between the CLI function and the imported business-logic function.
 - Fix `generate_random_password` producing `length + 3/4` characters instead of exactly `length` characters.
