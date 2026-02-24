@@ -1,11 +1,9 @@
 # Author:      Mouad KOMMIR <mouadkommir@gmail.com>
-# Description: Run the test suite on every push and pull request targeting master
+# Description: Run the test suite on pull requests targeting master
 
 name: CI
 
 on:
-  push:
-    branches: [master]
   pull_request:
     branches: [master]
 

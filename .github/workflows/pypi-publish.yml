@@ -1,18 +1,18 @@
 # Author:      Mouad KOMMIR <mouadkommir@gmail.com>
-# Description: Build and publish OniLock to PyPI when a new release is created
+# Description: On every push to master: run tests, then release if the version
+#              in pyproject.toml has not been tagged yet.
 
 name: Publish OniLock to PyPI
 
 on:
-  release:
-    types: [published]
-
-permissions:
-  contents: read
+  push:
+    branches: [master]
 
 jobs:
-  test-and-build:
+  test:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
       - uses: actions/checkout@v4
@@ -47,34 +47,85 @@ jobs:
       - name: Run tests
         run: poetry run python -m pytest tests/
 
-      - name: Build release distributions
-        run: poetry build
-
-      - name: Upload distributions
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-dists
-          path: dist/
-
-  pypi-publish:
+  release:
     runs-on: ubuntu-latest
-    needs:
-      - test-and-build
+    needs: test
     permissions:
-      id-token: write
-
-    environment:
-      name: pypi
-      url: https://pypi.org/project/onilock/${{ github.event.release.name }}
+      contents: write   # create tags and GitHub releases
+      id-token: write   # PyPI trusted publishing
 
     steps:
-      - name: Retrieve release distributions
-        uses: actions/download-artifact@v4
+      - uses: actions/checkout@v4
         with:
-          name: release-dists
-          path: dist/
+          fetch-depth: 0
 
-      - name: Publish release distributions to PyPI
+      - name: Read version from pyproject.toml
+        id: version
+        run: |
+          VERSION=$(grep '^version' pyproject.toml | sed -E 's/version\s*=\s*"([^"]+)"/\1/')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Check whether tag already exists
+        id: check_tag
+        run: |
+          if git ls-remote --tags origin "refs/tags/v${{ steps.version.outputs.version }}" | grep -q .; then
+            echo "Tag v${{ steps.version.outputs.version }} already exists — skipping release."
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Set up Python
+        if: steps.check_tag.outputs.skip == 'false'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install system dependencies
+        if: steps.check_tag.outputs.skip == 'false'
+        run: sudo apt-get update && sudo apt-get install -y gpg xclip
+
+      - name: Install Poetry
+        if: steps.check_tag.outputs.skip == 'false'
+        run: |
+          pip install --upgrade pipx
+          pipx install poetry
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Configure Poetry
+        if: steps.check_tag.outputs.skip == 'false'
+        run: poetry config virtualenvs.in-project true
+
+      - name: Cache virtualenv
+        if: steps.check_tag.outputs.skip == 'false'
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: ${{ runner.os }}-venv-${{ hashFiles('poetry.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-venv-
+
+      - name: Install dependencies
+        if: steps.check_tag.outputs.skip == 'false'
+        run: poetry install --no-interaction
+
+      - name: Build distributions
+        if: steps.check_tag.outputs.skip == 'false'
+        run: poetry build
+
+      - name: Create GitHub release and tag
+        if: steps.check_tag.outputs.skip == 'false'
+        run: |
+          gh release create "v${{ steps.version.outputs.version }}" \
+            dist/* \
+            --title "Version v${{ steps.version.outputs.version }}" \
+            --notes "Automatically generated." \
+            --target ${{ github.sha }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Publish to PyPI
+        if: steps.check_tag.outputs.skip == 'false'
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/
