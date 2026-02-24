@@ -1,14 +1,9 @@
-from datetime import datetime
 from pathlib import Path
 import shutil
-import uuid
-import multiprocessing
 import os
 from typing import Optional
 import base64
 
-from cryptography.fernet import Fernet
-import pyperclip
 import bcrypt
 import typer
 
@@ -16,23 +11,33 @@ from onilock.core.decorators import pre_post_hooks
 from onilock.core.keystore import keystore
 from onilock.core.settings import settings
 from onilock.core.logging_manager import logger
+from onilock.core.exceptions import (
+    VaultAlreadyInitializedError,
+    VaultAuthenticationError,
+)
 from onilock.core.gpg import (
     delete_pgp_key,
 )
 from onilock.core.utils import (
-    clear_clipboard_after_delay,
-    generate_random_password,
     get_passphrase,
-    getlogin,
-    naive_utcnow,
+    generate_random_password,
 )
 from onilock.db import DatabaseManager
-from onilock.db.models import Profile, Account
+from onilock.db.models import Profile
+from onilock.profile_store import (
+    get_profile_engine as _get_profile_engine,
+    load_profile,
+)
+from onilock.secret_manager import secret_manager
 
 
 __all__ = [
     "initialize",
     "new_account",
+    "show_account",
+    "search_accounts",
+    "update_account",
+    "rename_account",
     "copy_account_password",
     "remove_account",
     "delete_profile",
@@ -57,32 +62,14 @@ def verify_master_password(master_password: str):
         id (str): The target password identifier.
         master_password (str): The master password.
     """
-    engine = get_profile_engine()
-    data = engine.read()
-    if not data:
-        typer.echo(
-            "This database is not initialized. Please use the `init` command to initialize it."
-        )
-        exit(1)
-
-    profile = Profile(**data)
+    _, profile = load_profile()
     hashed_master_password = base64.b64decode(profile.master_password)
     return bcrypt.checkpw(master_password.encode(), hashed_master_password)
 
 
 def get_profile_engine():
-    """Get user config engine."""
-
-    cipher = Fernet(settings.SECRET_KEY.encode())
-    db_manager = DatabaseManager(
-        database_url=settings.SETUP_FILEPATH, is_encrypted=True
-    )
-    setup_engine = db_manager.get_engine()
-    setup_data = setup_engine.read()
-    b64encrypted_config_filepath = setup_data[settings.DB_NAME]["filepath"]
-    encrypted_filepath = base64.b64decode(b64encrypted_config_filepath)
-    config_filepath = cipher.decrypt(encrypted_filepath).decode()
-    return db_manager.add_engine("data", config_filepath, is_encrypted=True)
+    """Backward-compatible import path for profile engine access."""
+    return _get_profile_engine()
 
 
 @pre_post_hooks(pre_command, post_command)
@@ -105,15 +92,15 @@ def initialize(master_password: Optional[str] = None):
 
     db_manager = DatabaseManager(database_url=filepath, is_encrypted=True)
     engine = db_manager.get_engine()
-    setup_engine = db_manager.add_engine(
-        "setup", settings.SETUP_FILEPATH, is_encrypted=True
+    setup_manager = DatabaseManager(
+        database_url=settings.SETUP_FILEPATH, is_encrypted=True
     )
+    setup_engine = setup_manager.get_engine()
     data = engine.read()
     setup_data = setup_engine.read()
 
     if data or name in setup_data:
-        typer.echo("This database is already initialized")
-        exit(1)
+        raise VaultAlreadyInitializedError()
 
     if not master_password:
         logger.info(
@@ -177,65 +164,30 @@ def new_account(
         url (Optional[str]): The url / service where the password is used.
         description (Optional[str]): A password description.
     """
-    engine = get_profile_engine()
-    data = engine.read()
-    if not data:
-        typer.echo(
-            "This database is not initialized. Please use the `init` command to initialize it."
-        )
-        exit(1)
-
-    profile = Profile(**data)
-
-    if not password:
-        logger.warning("Password not provided, generating it randomly.")
-        password = generate_random_password()
-
-    # @TODO: Verify password strength.
-
-    cipher = Fernet(settings.SECRET_KEY.encode())
-    logger.debug("Encrypting the password.")
-    encrypted_password = cipher.encrypt(password.encode())
-    logger.debug(f"Encrypted password: {encrypted_password.decode()}")
-    b64_encrypted_password = base64.b64encode(encrypted_password).decode()
-    logger.debug(f"B64 Encrypted password: {b64_encrypted_password}")
-    password_model = Account(
-        id=name,
-        encrypted_password=b64_encrypted_password,
-        username=username or "",
+    return secret_manager.create(
+        name=name,
+        password=password,
+        username=username,
         url=url,
         description=description,
-        created_at=int(naive_utcnow().timestamp()),
     )
-    profile.accounts.append(password_model)
-    engine.write(profile.model_dump())
-    logger.info("Password saved successfully.")
-    return password
 
 
 @pre_post_hooks(pre_command, post_command)
 def list_accounts():
     """List all available accounts."""
+    accounts = secret_manager.list_all()
+    if not accounts:
+        typer.echo("No secrets found. Use `onilock new` or `onilock secrets create`.")
+        return
 
-    engine = get_profile_engine()
-    data = engine.read()
-    profile = Profile(**data)
-
-    typer.echo(f"Accounts list for {profile.name}")
-
-    for index, account in enumerate(profile.accounts):
-        created_date = datetime.fromtimestamp(account.created_at)
-        typer.echo(
-            f"""
-=================== [{index + 1}] {account.id} ===================
-
-          username: {account.username}
-          password: {account.encrypted_password[:15]}***{account.encrypted_password[-15:]}
-               url: {account.url}
-       description: {account.description}
-     creation date: {created_date.strftime("%Y-%m-%d %H:%M:%S")}
-            """
-        )
+    typer.echo("Stored secrets")
+    typer.echo("Idx  Name                 Username             URL")
+    typer.echo("---  -------------------  -------------------  ------------------------------")
+    for index, account in enumerate(accounts, start=1):
+        url = account.url or "-"
+        username = account.username or "-"
+        typer.echo(f"{index:>3}  {account.id[:19]:<19}  {username[:19]:<19}  {url[:30]}")
 
 
 @pre_post_hooks(pre_command, post_command)
@@ -244,6 +196,8 @@ def list_files():
 
     engine = get_profile_engine()
     data = engine.read()
+    if not data:
+        raise VaultNotInitializedError()
     profile = Profile(**data)
 
     typer.echo(f"Files list for {profile.name}")
@@ -271,68 +225,62 @@ def copy_account_password(id: str | int):
     Args:
         id (str): The target password identifier.
     """
-    engine = get_profile_engine()
-    data = engine.read()
-    if not data:
-        typer.echo(
-            "This database is not initialized. Please use the `init` command to initialize it."
-        )
-        exit(1)
-
-    profile = Profile(**data)
-
-    account = profile.get_account(id)
-    if not account:
-        typer.echo("Invalid account name or index", err=True, color=True)
-        exit(1)
-
-    logger.debug(f"Raw password: {account.encrypted_password}")
-    logger.debug("Decrypting the password.")
-    cipher = Fernet(settings.SECRET_KEY.encode())
-    encrypted_password = base64.b64decode(account.encrypted_password)
-    decrypted_password = cipher.decrypt(encrypted_password).decode()
-    pyperclip.copy(decrypted_password)
-    logger.info(f"Password {account.id} copied to clipboard successfully.")
+    secret_id = secret_manager.copy(id, clear_after=10)
+    logger.info(f"Password {secret_id} copied to clipboard successfully.")
     typer.echo("Password copied to clipboard successfully.")
-
-    logger.debug("Password will be cleared in 25 seconds.")
-
-    process = multiprocessing.Process(
-        target=clear_clipboard_after_delay,
-        args=(decrypted_password, 10),
-    )
-    process.start()
-
-    # Immediately exit the main process to allow it to terminate while the child process runs
-    os._exit(0)
+    logger.debug("Password will be cleared in 10 seconds.")
 
 
 @pre_post_hooks(pre_command, post_command)
-def remove_account(name: str):
+def show_account(id: str | int, reveal_password: bool = False):
+    """Show account metadata and optionally reveal the password."""
+    return secret_manager.show(id, reveal_password=reveal_password)
+
+
+@pre_post_hooks(pre_command, post_command)
+def search_accounts(query: str, field: str = "all", limit: int = 20):
+    """Search accounts by query and field."""
+    return secret_manager.search(query, field=field, limit=limit)
+
+
+@pre_post_hooks(pre_command, post_command)
+def update_account(
+    id: str | int,
+    *,
+    name: Optional[str] = None,
+    password: Optional[str] = None,
+    generate_password: bool = False,
+    username: Optional[str] = None,
+    url: Optional[str] = None,
+    description: Optional[str] = None,
+):
+    """Update account fields."""
+    return secret_manager.update(
+        id,
+        name=name,
+        password=password,
+        generate_password=generate_password,
+        username=username,
+        url=url,
+        description=description,
+    )
+
+
+@pre_post_hooks(pre_command, post_command)
+def rename_account(id: str | int, new_name: str):
+    """Rename an account."""
+    return secret_manager.rename(id, new_name)
+
+
+@pre_post_hooks(pre_command, post_command)
+def remove_account(name: str | int):
     """
     Remove a password.
 
     Args:
-        name (str): The target account name.
+        name (str | int): The target account identifier.
     """
-    engine = get_profile_engine()
-    data = engine.read()
-    if not data:
-        typer.echo(
-            "This database is not initialized. Please use the `init` command to initialize it."
-        )
-        exit(1)
-
-    profile = Profile(**data)
-
-    account = profile.get_account(name)
-
-    if not account:
-        typer.echo("Invalid account name", err=True, color=True)
-        exit(1)
-
-    profile.remove_account(name)
-    engine.write(profile.model_dump())
+    return secret_manager.delete(name)
 
 
 @pre_post_hooks(pre_command, post_command)
@@ -345,8 +293,7 @@ def delete_profile(master_password: str):
     """
     master_password_match = verify_master_password(master_password)
     if not master_password_match:
-        typer.echo("Invalid master password!")
-        exit(1)
+        raise VaultAuthenticationError()
 
     # Get passphrase before deleting the keyring
     passphrase = get_passphrase()
@@ -355,10 +302,13 @@ def delete_profile(master_password: str):
     keystore.clear()
 
     # Delete PGP key
-    delete_pgp_key(
-        passphrase=passphrase,
-        gpg_home=settings.GPG_HOME,
-        real_name=settings.PGP_REAL_NAME,
-    )
+    try:
+        delete_pgp_key(
+            passphrase=passphrase,
+            gpg_home=settings.GPG_HOME,
+            real_name=settings.PGP_REAL_NAME,
+        )
+    except Exception as exc:
+        logger.warning(f"Failed to delete PGP key: {exc}")
 
-    shutil.rmtree(settings.VAULT_DIR)
+    shutil.rmtree(settings.VAULT_DIR, ignore_errors=True)

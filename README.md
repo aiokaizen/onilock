@@ -68,11 +68,21 @@ onilock new
 ```
 You will be prompted to enter the account name, username, and password.
 
+Recommended structured workflow:
+```sh
+onilock secrets create
+```
+
 ### 🔹 List Stored Accounts
 ```sh
 onilock list
 ```
 Displays all saved accounts.
+
+Structured command:
+```sh
+onilock secrets list
+```
 
 ### 🔹 Copy a Password to Clipboard
 ```sh
@@ -80,11 +90,52 @@ onilock copy <account_name>
 ```
 This copies the password to your clipboard securely.
 
+Structured command:
+```sh
+onilock secrets copy <account_name_or_index>
+```
+
+### 🔹 Show Secret Details
+```sh
+onilock secrets show <account_name_or_index>
+onilock secrets show <account_name_or_index> --reveal
+```
+
+### 🔹 Update a Secret
+```sh
+onilock secrets update <account_name_or_index> --username new_user
+onilock secrets update <account_name_or_index> --generate-password
+```
+
+### 🔹 Rename a Secret
+```sh
+onilock secrets rename <account_name_or_index> <new_name>
+```
+Alias:
+```sh
+onilock rename <account_name_or_index> <new_name>
+```
+
+### 🔹 Search Secrets
+```sh
+onilock secrets search github
+onilock secrets search "corp" --field url
+```
+Alias:
+```sh
+onilock search github
+```
+
 ### 🔹 Remove an Account
 ```sh
 onilock remove <account_name>
 ```
 Deletes the stored credentials.
+
+Structured command:
+```sh
+onilock secrets delete <account_name_or_index>
+```
 
 ### 🔹 Generate a Secure Password
 ```sh
@@ -147,4 +198,3 @@ View full changelog history on `CHANGELOG.md` file.
 ## 📧 Contact
 Author: Mouad Kommir  
 Email: mouadkommir@gmail.com
-

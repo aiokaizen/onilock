@@ -1,18 +1,22 @@
 import os
 import json
 import hashlib
+import base64
 from pathlib import Path
 from typing import Dict, Optional, Set
 import uuid
 from abc import ABC, abstractmethod
 
 import keyring
+from cryptography.fernet import Fernet, InvalidToken
 from Crypto.Cipher import AES
-from Crypto.Random import get_random_bytes
-from Crypto.Util.Padding import pad, unpad
+from Crypto.Util.Padding import unpad
 
 from onilock.core.enums import KeyStoreBackendEnum
-from onilock.core.exceptions.exceptions import KeyRingBackendNotAvailable
+from onilock.core.exceptions.exceptions import (
+    KeyRingBackendNotAvailable,
+    VaultConfigurationError,
+)
 
 
 class KeyStore(ABC):
@@ -55,8 +59,11 @@ class KeyRing(KeyStore):
     """
 
     def __init__(self, keystore_id: str) -> None:
-        # This line raises an error if the backend is not available.
-        keyring.get_password("onilock", "x")
+        try:
+            # This line raises an error if the backend is not available.
+            keyring.get_password("onilock", "x")
+        except Exception as exc:
+            raise KeyRingBackendNotAvailable() from exc
         super().__init__(keystore_id)
 
     def clear(self):
@@ -79,56 +86,78 @@ class KeyRing(KeyStore):
 
 class VaultKeyStore(KeyStore):
     """
-    Less secure key store using the filesystem to store passwords.
+    Fallback key store using authenticated encryption on the filesystem.
     """
-
-    BLOCK_SIZE = 16
 
     def __init__(self, keystore_id: str) -> None:
         super().__init__(keystore_id)
 
-        # Setup file store.
-        keystore_basedir = os.path.join(os.path.expanduser("~"), ".onilock", "vault")
-        if not os.path.exists(keystore_basedir):
-            os.makedirs(keystore_basedir)
-
-        hashcode = hashlib.sha256(__file__.encode()).hexdigest()
-        self.key = hashcode[:32].encode()
-        self.iv = get_random_bytes(self.BLOCK_SIZE)
-
+        self._base_dir = Path(os.path.expanduser("~")) / ".onilock" / "vault"
+        self._base_dir.mkdir(parents=True, exist_ok=True)
+        self._key_file = self._base_dir / ".keystore.key"
         filename = str(uuid.uuid5(uuid.NAMESPACE_DNS, keystore_id)).split("-")[-1]
-        self.filename = os.path.join(keystore_basedir, f"{filename}.oni")
+        self.filename = self._base_dir / f"{filename}.oni"
+        self._fernet = Fernet(self._load_or_create_key())
 
-    @property
-    def _cipher(self):
-        return AES.new(self.key, AES.MODE_CBC, self.iv)
+    def _write_private_file(self, path: Path, data: bytes):
+        path.write_bytes(data)
+        os.chmod(path, 0o600)
+
+    def _load_or_create_key(self) -> bytes:
+        env_key = os.environ.get("ONI_VAULT_KEY")
+        if env_key:
+            key = env_key.encode()
+            if len(key) == 44:
+                return key
+            return base64.urlsafe_b64encode(hashlib.sha256(key).digest())
+
+        if self._key_file.exists():
+            return self._key_file.read_bytes()
+
+        key = Fernet.generate_key()
+        self._write_private_file(self._key_file, key)
+        return key
 
     def _read_keystore(self) -> Dict:
         try:
-            encrypted_data = Path(self.filename).read_bytes()
-            self.iv = encrypted_data[self.BLOCK_SIZE : self.BLOCK_SIZE * 2]
-            encrypted_data = (
-                encrypted_data[: self.BLOCK_SIZE]
-                + encrypted_data[self.BLOCK_SIZE * 2 :]
-            )
-            json_str = unpad(self._cipher.decrypt(encrypted_data), self.BLOCK_SIZE)
-            return json.loads(json_str)
+            encrypted_data = self.filename.read_bytes()
         except FileNotFoundError:
             return dict()
+        try:
+            plaintext = self._fernet.decrypt(encrypted_data)
+        except InvalidToken as exc:
+            legacy_data = self._read_legacy_keystore(encrypted_data)
+            if legacy_data is not None:
+                self._write_keystore(legacy_data)
+                return legacy_data
+            raise VaultConfigurationError("Vault keystore integrity check failed.") from exc
+        return json.loads(plaintext.decode())
+
+    def _read_legacy_keystore(self, encrypted_data: bytes) -> Optional[Dict]:
+        """
+        Read the previous AES-CBC keystore format and migrate it forward.
+        """
+        try:
+            block_size = 16
+            iv = encrypted_data[block_size : block_size * 2]
+            ciphertext = encrypted_data[:block_size] + encrypted_data[block_size * 2 :]
+            legacy_key = hashlib.sha256(__file__.encode()).hexdigest()[:32].encode()
+            cipher = AES.new(legacy_key, AES.MODE_CBC, iv)
+            json_bytes = unpad(cipher.decrypt(ciphertext), block_size)
+            return json.loads(json_bytes.decode())
+        except Exception:
+            return None
 
     def _write_keystore(self, data):
-        json_str = json.dumps(data)
-        padded_data = pad(json_str.encode(), self.BLOCK_SIZE)
-        encrypted_data = self._cipher.encrypt(padded_data)
-        iv_data = (
-            encrypted_data[: self.BLOCK_SIZE]
-            + self.iv
-            + encrypted_data[self.BLOCK_SIZE :]
-        )
-        Path(self.filename).write_bytes(iv_data)
+        json_str = json.dumps(data, sort_keys=True)
+        encrypted_data = self._fernet.encrypt(json_str.encode())
+        self._write_private_file(self.filename, encrypted_data)
 
     def clear(self):
-        os.remove(self.filename)
+        if self.filename.exists():
+            self.filename.unlink()
+        if self._key_file.exists():
+            self._key_file.unlink()
         super().clear()
 
     def set_password(self, id: str, password: str):
@@ -144,7 +173,7 @@ class VaultKeyStore(KeyStore):
 
     def delete_password(self, id: str):
         data = self._read_keystore()
-        data.pop(id)
+        data.pop(id, None)
         self._write_keystore(data)
         super().delete_password(id)
 
@@ -164,7 +193,7 @@ class KeyStoreManager:
         if default_backend == KeyStoreBackendEnum.KEYRING.value:
             try:
                 self.keystore = KeyRing(keystore_id)
-            except Exception:
+            except KeyRingBackendNotAvailable:
                 self.keystore = VaultKeyStore(keystore_id)
         elif default_backend == KeyStoreBackendEnum.VAULT.value:
             self.keystore = VaultKeyStore(keystore_id)

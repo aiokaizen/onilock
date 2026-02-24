@@ -3,6 +3,7 @@ from typing import Callable, Dict, Optional
 
 import typer
 
+from onilock.core.exceptions import OniLockError
 from onilock.core.settings import settings
 
 
@@ -19,10 +20,15 @@ def exception_handler(func):
             typer.echo(
                 "This functionality is not implemented in this version.", err=True
             )
+            raise typer.Exit(code=1)
+        except OniLockError as e:
+            typer.echo(str(e), err=True)
+            raise typer.Exit(code=1)
         except Exception as e:
             typer.echo(f"Unknown exception was raised in the application: {e}")
             if settings.DEBUG:
                 raise e
+            raise typer.Exit(code=1)
 
     return wrapper
 
@@ -48,10 +54,12 @@ def pre_post_hooks(
     post_kwargs = post_kwargs or {}
 
     def decorator(func):
+        @functools.wraps(func)
         def wrapper(*args, **kwargs):
             pre(**pre_kwargs) if pre else None
-            func(*args, **kwargs)
+            result = func(*args, **kwargs)
             post(**post_kwargs) if post else None
+            return result
 
         return wrapper
 

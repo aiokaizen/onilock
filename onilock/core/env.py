@@ -11,14 +11,14 @@ _env_loaded = False
 def load_env():
     # Load environment variables
     env_filenames = [
-        # Order matters. envs in the bottom override envs in the top of the list.
+        # Order matters. Entries lower in the list override previous values.
         Path.home() / ".onilock" / ".env",
         VAULT_DIR / ".env",
         ".env",
     ]
     for filename in env_filenames:
         if os.path.exists(filename):
-            load_dotenv(filename)
+            load_dotenv(filename, override=True)
 
     global _env_loaded
     _env_loaded = True

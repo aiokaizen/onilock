@@ -4,6 +4,8 @@ import os
 import getpass
 from pathlib import Path
 import time
+import sys
+import subprocess
 import string
 import secrets
 import random
@@ -40,6 +42,34 @@ def clear_clipboard_after_delay(content: str, delay=60):
         pass
 
 
+def schedule_clipboard_clear(content: str, delay: int = 60):
+    """Run clipboard cleanup in a detached process without blocking command exit."""
+    script = (
+        "import sys,time\n"
+        "import pyperclip\n"
+        "delay=int(sys.argv[1])\n"
+        "content=sys.stdin.read()\n"
+        "time.sleep(delay)\n"
+        "try:\n"
+        "    current=pyperclip.paste()\n"
+        "    if current == content:\n"
+        "        pyperclip.copy('')\n"
+        "except Exception:\n"
+        "    pass\n"
+    )
+    proc = subprocess.Popen(
+        [sys.executable, "-c", script, str(delay)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        start_new_session=True,
+    )
+    if proc.stdin:
+        proc.stdin.write(content)
+        proc.stdin.close()
+
+
 def get_version() -> str:
     try:
         return importlib.metadata.version("onilock")
@@ -69,6 +99,10 @@ def generate_random_password(
     Returns:
         str : The generated password
     """
+    min_length = 4 if include_special_characters else 3
+    if length < min_length:
+        raise ValueError(f"length must be at least {min_length}")
+
     characters = string.ascii_letters + string.digits
     punctuation = "@$!%*?&_}{()-=+"
     password = [
@@ -80,10 +114,10 @@ def generate_random_password(
         password.append(secrets.choice(punctuation))
         characters += punctuation
 
-    password += [secrets.choice(characters) for _ in range(length)]
+    password += [secrets.choice(characters) for _ in range(length - len(password))]
 
     # Shuffle password in-place.
-    random.shuffle(password)
+    random.SystemRandom().shuffle(password)
 
     return "".join(password)
 

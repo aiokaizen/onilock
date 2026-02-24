@@ -1,5 +1,12 @@
 from .exceptions import (
-    BaseException,
+    OniLockError,
+    VaultNotInitializedError,
+    VaultAlreadyInitializedError,
+    VaultAuthenticationError,
+    InvalidAccountIdentifierError,
+    InvalidFileIdentifierError,
+    VaultConfigurationError,
     EncryptionKeyNotFoundError,
+    KeyRingBackendNotAvailable,
     DatabaseEngineAlreadyExistsException,
 )

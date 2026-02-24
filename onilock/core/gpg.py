@@ -1,6 +1,8 @@
 from typing import Optional
 import gnupg
 
+from onilock.core.exceptions import EncryptionKeyNotFoundError
+
 
 def generate_pgp_key(gpg_home: Optional[str], name: str, email: str, passphrase: str):
     """Generate a new PGP key pair."""
@@ -72,6 +74,8 @@ def delete_pgp_key(
     """Delete PGP public and private key."""
     gpg = gnupg.GPG(gnupghome=gpg_home)
     key_info = get_pgp_key_info(gpg_home, real_name, key_id)
+    if not key_info:
+        raise EncryptionKeyNotFoundError("PGP key not found.")
     fingerprint = key_info["fingerprint"]
 
     # Delete the secret key first
