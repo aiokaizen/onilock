@@ -32,7 +32,14 @@ class EncryptedEngine:
         self, db_url: str, encryption_backend: Optional[BaseEncryptionBackend] = None
     ):
         self.db_url = db_url
-        self.encryption_backend = EncryptionBackendManager(encryption_backend)
+        self._encryption_backend = encryption_backend
+        self._encryption_manager: Optional[EncryptionBackendManager] = None
+
+    @property
+    def encryption_backend(self) -> EncryptionBackendManager:
+        if self._encryption_manager is None:
+            self._encryption_manager = EncryptionBackendManager(self._encryption_backend)
+        return self._encryption_manager
 
     def write(self, data: Any) -> None:
         raise NotImplementedError

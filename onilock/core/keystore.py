@@ -114,13 +114,45 @@ class VaultKeyStore(KeyStore):
         try:
             encrypted_data = Path(self.filename).read_bytes()
             iv = encrypted_data[self.BLOCK_SIZE : self.BLOCK_SIZE * 2]
-            encrypted_data = (
+            ciphertext = (
                 encrypted_data[: self.BLOCK_SIZE]
                 + encrypted_data[self.BLOCK_SIZE * 2 :]
             )
-            json_str = unpad(self._cipher(iv).decrypt(encrypted_data), self.BLOCK_SIZE)
+            json_str = unpad(self._cipher(iv).decrypt(ciphertext), self.BLOCK_SIZE)
             return json.loads(json_str)
         except FileNotFoundError:
+            return dict()
+        except Exception:
+            # Decryption failed — attempt one-time migration from pre-v1.7.3
+            # key derivation (hashlib.sha256(__file__)).
+            return self._migrate_legacy_keystore()
+
+    def _migrate_legacy_keystore(self) -> Dict:
+        """Transparently migrate a keystore encrypted with the pre-v1.7.3 key."""
+        import hashlib
+
+        try:
+            legacy_key = hashlib.sha256(__file__.encode()).hexdigest()[:32].encode()
+            encrypted_data = Path(self.filename).read_bytes()
+            iv = encrypted_data[self.BLOCK_SIZE : self.BLOCK_SIZE * 2]
+            ciphertext = (
+                encrypted_data[: self.BLOCK_SIZE]
+                + encrypted_data[self.BLOCK_SIZE * 2 :]
+            )
+            cipher = AES.new(legacy_key, AES.MODE_CBC, iv)
+            json_str = unpad(cipher.decrypt(ciphertext), self.BLOCK_SIZE)
+            data = json.loads(json_str)
+            # Re-write with the new random key so migration only happens once.
+            self._write_keystore(data)
+            logging.getLogger(__name__).info(
+                "Keystore migrated to new key format (pre-v1.7.3 → v1.7.3+)."
+            )
+            return data
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "Keystore decryption failed and legacy migration was unsuccessful. "
+                "The keystore may be corrupted or was created by an incompatible version."
+            )
             return dict()
 
     def _write_keystore(self, data):

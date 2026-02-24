@@ -8,12 +8,12 @@ import subprocess
 import tempfile
 
 import gnupg
-import typer
 
 from onilock.account_manager import get_profile_engine
 from onilock.core.constants import SECRET_FILENAME_PREFIX
 from onilock.core.settings import settings
 from onilock.core.logging_manager import logger
+from onilock.core.ui import success, error
 from onilock.core.utils import getlogin, naive_utcnow
 from onilock.db.engines import Engine
 from onilock.db.models import File, Profile
@@ -34,9 +34,24 @@ class FileEncryptionManager:
     _engine: Optional[Engine]
 
     def __init__(self, gpg_home: Optional[str] = None) -> None:
-        self.gpg = gnupg.GPG(
-            gnupghome=gpg_home or settings.GPG_HOME,
-        )
+        home = gpg_home or settings.GPG_HOME
+        if home:
+            try:
+                os.makedirs(home, exist_ok=True)
+                os.chmod(home, 0o700)
+            except PermissionError:
+                if settings.IS_DEV_SOURCE:
+                    home = str(Path(settings.VAULT_DIR).parent / ".gnupg")
+                    os.makedirs(home, exist_ok=True)
+                    os.chmod(home, 0o700)
+                else:
+                    raise
+
+            if settings.IS_DEV_SOURCE and not os.access(home, os.W_OK):
+                home = str(Path(settings.VAULT_DIR).parent / ".gnupg")
+                os.makedirs(home, exist_ok=True)
+                os.chmod(home, 0o700)
+        self.gpg = gnupg.GPG(gnupghome=home)
         self._engine = None
         self._profile = None
 
@@ -47,8 +62,8 @@ class FileEncryptionManager:
 
         data = self.engine.read()
         if not data:
-            typer.echo(
-                "This database is not initialized. Please use the `init` command to initialize it."
+            error(
+                "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
             )
             exit(1)
 
@@ -62,24 +77,32 @@ class FileEncryptionManager:
             return self._engine
 
         engine = get_profile_engine()
+        if not engine:
+            error(
+                "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+            )
+            exit(1)
         self._engine = engine
         return engine
 
     def encrypt_bytes(self, data: bytes, output_filename: Path | str):
-        """Encrypts a file and stors it in the vault."""
+        """Encrypts a file and stores it in the vault."""
 
         output_filepath: Path = (
             output_filename
             if isinstance(output_filename, Path)
             else Path(output_filename)
         )
+        output_filepath.parent.mkdir(parents=True, exist_ok=True)
 
         encrypted_data = self.gpg.encrypt(
             data,
-            recipients=[settings.PGP_REAL_NAME],  # The recipient's email or key ID
-            always_trust=True,  # Avoids trust prompt
+            recipients=[settings.PGP_REAL_NAME],
+            always_trust=True,
             armor=False,
         )
+        if not encrypted_data.ok:
+            raise RuntimeError(f"Encryption failed: {encrypted_data.status}")
         output_filepath.write_bytes(encrypted_data.data)
         logger.info("File encrypted successfully.")
 
@@ -90,26 +113,31 @@ class FileEncryptionManager:
         override: bool = False,
         update_db: bool = True,
     ):
-        """Encrypts a file and stors it in the vault."""
+        """Encrypts a file and stores it in the vault."""
 
         target_filepath = Path(file_to_encrypt)
 
         if not target_filepath.exists():
-            typer.echo("File does not exist.")
+            error(f"File not found: [bold]{file_to_encrypt}[/bold]")
             exit(1)
 
         if not target_filepath.is_file():
-            typer.echo(
-                "Please make sure `filename` is a normal file. Directories are not supported in the current version."
+            error(
+                "Directories are not supported. Please provide a path to a regular file."
             )
             exit(1)
+
+        if update_db:
+            _ = self.profile
 
         output_filename = get_output_filename(file_id)
         output_filepath = settings.VAULT_DIR / output_filename
         logger.debug(f"Encryption filename {output_filename}")
 
         if output_filepath.exists() and not override:
-            typer.echo("ID already exists. Please choose another id for your file.")
+            error(
+                f"ID [bold]{file_id}[/bold] already exists. Choose a different ID."
+            )
             exit(1)
 
         with target_filepath.open("rb") as f:
@@ -130,6 +158,7 @@ class FileEncryptionManager:
                     )
                 )
                 self.engine.write(self.profile.model_dump())
+                success(f"[bold]{file_id}[/bold] encrypted and stored in vault.")
             return encrypted_data
 
     def decrypt_bytes(self, data: bytes) -> bytes:
@@ -152,7 +181,10 @@ class FileEncryptionManager:
 
     def open(self, file_id: str, readonly=False):
         if not self.profile.get_file(file_id):
-            typer.echo("Invalid file id.")
+            error(
+                f"File [bold]{file_id}[/bold] not found. "
+                "Run [bold]onilock list-files[/bold] to see available files."
+            )
             exit(1)
 
         decrypted_data = self.decrypt(file_id)
@@ -186,6 +218,7 @@ class FileEncryptionManager:
             encrypted_filename.unlink()
             self.profile.remove_file(file_id)
             self.engine.write(self.profile.model_dump())
+            success(f"[bold]{file_id}[/bold] removed from vault.")
 
     def export(self, file_id: Optional[str] = None, file_path: Optional[str] = None):
         """
@@ -195,7 +228,10 @@ class FileEncryptionManager:
         """
 
         if file_id and not self.profile.get_file(file_id):
-            typer.echo("Invalid file id.")
+            error(
+                f"File [bold]{file_id}[/bold] not found. "
+                "Run [bold]onilock list-files[/bold] to see available files."
+            )
             exit(1)
 
         is_dir = file_path and os.path.isdir(file_path)
@@ -216,6 +252,7 @@ class FileEncryptionManager:
                 output_file = Path(file_path)
 
             output_file.write_bytes(decrypted_data)
+            success(f"Exported to [bold]{output_file}[/bold]")
             return
 
         default_output_filename = Path(
@@ -229,15 +266,14 @@ class FileEncryptionManager:
             output_file = Path(file_path)
 
         with zipfile.ZipFile(output_file, "w", zipfile.ZIP_DEFLATED) as zipf:
-            # Create a folder inside the zip file
             folder_name = Path("onilock_vault/")
-            # Iterate over the binary strings and add each as a separate file in the folder
             for file in self.profile.files:
-                # Add the binary content as a file in the zip
                 bin_data = self.decrypt(file.id)
                 filename = str(folder_name / Path(file.src).name)
                 with zipf.open(filename, "w") as f:
                     f.write(bin_data)
+
+        success(f"All files exported to [bold]{output_file}[/bold]")
 
     def clear(self):
         """Delete all encrypted files in the vault."""

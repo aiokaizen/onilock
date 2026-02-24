@@ -1,14 +1,19 @@
 from typing import Optional
+import sys
 
 import typer
+from rich.panel import Panel
 
 from onilock.core import env
 from onilock.core.decorators import exception_handler
+from onilock.core.ui import console
 from onilock.core.utils import generate_random_password, get_version
+from cryptography.fernet import Fernet
 from onilock.filemanager import FileEncryptionManager
 from onilock.account_manager import (
     copy_account_password,
     delete_profile,
+    get_profile_engine,
     initialize,
     list_accounts,
     list_files,
@@ -31,18 +36,19 @@ def initialize_vault(
 
     Note:
         The master password should be very secure and be saved in a safe place.
-
-    Args:
-        master_password (Optional[str]): The master password used to secure all the other accounts.
     """
 
     if not master_password:
-        typer.echo("\n\nEnter your Master Password:")
-        typer.echo(
-            "* Ensure that the password is strong and hidden safely.\n"
-            "Leave empty to automatically generate a secure master password."
+        console.print(
+            Panel(
+                "[bold]Enter your master password below.[/bold]\n\n"
+                "• Use a strong, unique password and store it somewhere safe.\n"
+                "• Leave empty to [bold]auto-generate[/bold] a secure master password.",
+                title="[cyan]Initialize OniLock Vault[/cyan]",
+                border_style="cyan",
+            )
         )
-        master_password = typer.prompt("> ", default="", hide_input=True)
+        master_password = typer.prompt("Master password", default="", hide_input=True)
 
     return initialize(master_password)
 
@@ -50,26 +56,19 @@ def initialize_vault(
 @app.command()
 @exception_handler
 def new(
-    name: str = typer.Option(..., prompt="Enter Account name (e.g. Github)"),
+    name: str = typer.Option(..., prompt="Account name (e.g. Github)"),
     password: Optional[str] = typer.Option(
         "",
-        prompt="Enter Account password.",
+        prompt="Password (leave empty to auto-generate)",
         help="If empty, a strong password will be auto-generated.",
         hide_input=True,
     ),
-    username: Optional[str] = typer.Option("", prompt="Enter Account username"),
-    url: Optional[str] = typer.Option("", prompt="Enter Account URL"),
-    description: Optional[str] = typer.Option("", prompt="Enter Account Description"),
+    username: Optional[str] = typer.Option("", prompt="Username"),
+    url: Optional[str] = typer.Option("", prompt="URL"),
+    description: Optional[str] = typer.Option("", prompt="Description"),
 ):
     """
-    Add new account with to onilock.
-
-    Args:
-        name (str): Account name.
-        password (Optional[str]): The password to encrypt, automatically generated if not provided.
-        username (Optional[str]): The account username
-        url (Optional[str]): The url / service where the password is used.
-        description (Optional[str]): A password description.
+    Add a new account to OniLock.
     """
     return new_account(name, password, username, url, description)
 
@@ -81,9 +80,17 @@ def encrypt_file(file_id: str, filename: str):
     Encrypt a file and save it in the vault.
 
     Args:
-        file_id (str): To identify the file when reading and decrypting.
-        filename (str): The file path to encrypt.
+        file_id (str): Identifier to use when reading or decrypting the file.
+        filename (str): Path to the file to encrypt.
     """
+    if not get_profile_engine():
+        if not sys.stdin.isatty():
+            console.print(
+                "[bold red]✗[/bold red] Vault is not initialized. "
+                "Run [bold]onilock initialize-vault[/bold] in an interactive shell."
+            )
+            raise SystemExit(1)
+        initialize_vault()
     filemanager.encrypt(file_id, filename)
 
 
@@ -91,10 +98,10 @@ def encrypt_file(file_id: str, filename: str):
 @exception_handler
 def read_file(file_id: str):
     """
-    Read the contents of an encrypted file.
+    Open an encrypted file in read-only mode.
 
     Args:
-        file_id (str): To identify the file when reading and decrypting.
+        file_id (str): File identifier.
     """
     filemanager.read(file_id)
 
@@ -103,10 +110,10 @@ def read_file(file_id: str):
 @exception_handler
 def edit_file(file_id: str):
     """
-    Change the contents of an encrypted file.
+    Open and edit an encrypted file in-place.
 
     Args:
-        file_id (str): To identify the file when reading and decrypting.
+        file_id (str): File identifier.
     """
     filemanager.open(file_id)
 
@@ -115,11 +122,15 @@ def edit_file(file_id: str):
 @exception_handler
 def delete_file(file_id: str):
     """
-    Delete an enctypted file from the vault.
+    Permanently delete an encrypted file from the vault.
 
     Args:
-        file_id (str): File id.
+        file_id (str): File identifier.
     """
+    typer.confirm(
+        f"Delete '{file_id}' from vault? This cannot be undone.",
+        abort=True,
+    )
     filemanager.delete(file_id)
 
 
@@ -127,11 +138,11 @@ def delete_file(file_id: str):
 @exception_handler
 def export_file(file_id: str, output: Optional[str] = None):
     """
-    Export the contents of an encrypted file back to it's original format.
+    Decrypt and export a file to its original format.
 
     Args:
-        file_id (str): To identify the file when reading and decrypting.
-        output (str): The new file name (path).
+        file_id (str): File identifier.
+        output (str): Destination path (defaults to current directory).
     """
     filemanager.export(file_id, output)
 
@@ -140,10 +151,10 @@ def export_file(file_id: str, output: Optional[str] = None):
 @exception_handler
 def export_all_files(output: Optional[str] = None):
     """
-    Export ALL encrypted files in OniLock to a zip file.
+    Export all encrypted files in OniLock to a zip archive.
 
     Args:
-        output (str): The name of the zip file that will contain all files.
+        output (str): Destination zip file path (defaults to current directory).
     """
     filemanager.export(file_path=output)
 
@@ -152,10 +163,7 @@ def export_all_files(output: Optional[str] = None):
 @exception_handler
 def export_vault(output: Optional[str] = None):
     """
-    Export ALL encrypted files in OniLock to a zip file.
-
-    Args:
-        output (str): The name of the zip file that will contain all files.
+    Export the entire OniLock vault (accounts + files).
     """
     raise NotImplementedError()
 
@@ -163,7 +171,7 @@ def export_vault(output: Optional[str] = None):
 @app.command("list")
 @exception_handler
 def accounts():
-    """List all available accounts."""
+    """List all stored accounts."""
 
     return list_accounts()
 
@@ -171,7 +179,7 @@ def accounts():
 @app.command("list-files")
 @exception_handler
 def list_all_files():
-    """List all available files."""
+    """List all encrypted files stored in the vault."""
 
     return list_files()
 
@@ -180,12 +188,9 @@ def list_all_files():
 @exception_handler
 def copy(name: str):
     """
-    Copy the password of the account with the provided name or index to the clipboard.
+    Copy an account's password to the clipboard.
 
-    N.B: You can find the index next to an account's name in the accounts list.
-
-    Args:
-        name (str): The target password identifier.
+    NAME can be the account name or its 1-based index from `onilock list`.
     """
     account_id: str | int = name
     try:
@@ -199,76 +204,80 @@ def copy(name: str):
 @exception_handler
 def remove_account(name: str):
     """
-    Remove an account.
+    Remove an account from the vault.
 
     Args:
-        name (str): The target password identifier.
+        name (str): Account name.
     """
+    typer.confirm(f"Remove account '{name}'?", abort=True)
     return am_remove_account(name)
 
 
 @app.command()
 @exception_handler
 def generate_pwd(
-    len: int = typer.Option(8, prompt="Enter password length"),
+    len: int = typer.Option(8, prompt="Password length"),
     special_chars: bool = typer.Option(True, prompt="Include special characters?"),
 ):
     """
-    Generate and returns a random password
+    Generate a random password.
     """
     random_password = generate_random_password(len, special_chars)
-    typer.echo(random_password)
+    console.print(
+        Panel(
+            f"[bold green]{random_password}[/bold green]",
+            title="[cyan]Generated Password[/cyan]",
+            border_style="cyan",
+        )
+    )
+
+
+@app.command()
+@exception_handler
+def generate_fernet_key():
+    """
+    Generate a random Fernet key.
+    """
+    key = Fernet.generate_key().decode()
+    console.print(
+        Panel(
+            f"[bold green]{key}[/bold green]",
+            title="[cyan]Fernet Key[/cyan]",
+            border_style="cyan",
+        )
+    )
 
 
 @app.command()
 @exception_handler
 def erase_user_data(
     master_password: str = typer.Option(
-        prompt="Enter Account's master password.",
+        prompt="Master password",
         hide_input=True,
     ),
 ):
     """
-    Delete all profile accounts.
-
-    Args:
-        master_password (str): Profile master password.
+    Permanently delete all OniLock data for this profile.
     """
+    typer.confirm(
+        "This will permanently delete ALL accounts, files, and keys. Continue?",
+        abort=True,
+    )
     return delete_profile(master_password)
 
 
 @app.command()
 @exception_handler
 def version():
-    """Print the current version of onilock and exit."""
+    """Print the current OniLock version."""
     v = get_version()
-    typer.echo(f"OniLock {v}")
-
-
-# def version_callback(ctx: typer.Context, param: typer.CallbackParam):
-#     if ctx.resilient_parsing:
-#         return
-#     v = get_version()
-#     typer.echo(f"OniLock {v}")
-#     return None
-
-
-# @app.command()
-# @exception_handler
-# def info():
-#     """
-#     Displays information and metadata about the user profile.
-#
-#     e.g.
-#         - Profile name
-#         - Creation time
-#         - Vault version
-#         - OniLock version
-#         - Number of stored passwords
-#         - Master password hash
-#         - Number and list of Weak passwords
-#     """
-#     raise NotImplementedError()
+    console.print(
+        Panel(
+            f"[bold]OniLock[/bold] [cyan]{v}[/cyan]",
+            border_style="dim",
+            expand=False,
+        )
+    )
 
 
 @app.command()
@@ -278,22 +287,13 @@ def export(dist: str = "."):
     Export all user data to an external zip file.
 
     Args:
-        dist (Optional[str]): The destination zip file path. Defaults to current directory.
+        dist (str): Destination path. Defaults to current directory.
     """
     raise NotImplementedError()
 
 
 @app.callback()
-def main(
-    # version: bool = typer.Option(
-    #     None,
-    #     "--version",
-    #     "-v",
-    #     help="Show the current OniLock version and exit.",
-    #     is_eager=True,
-    #     callback=version_callback,
-    # ),
-):
+def main():
     """
     OniLock - Secure Password Manager CLI.
     """

@@ -204,13 +204,13 @@ class TestInitialize(unittest.TestCase):
                 ms.SECRET_KEY = TEST_SECRET_KEY
                 ms.SETUP_FILEPATH = "/tmp/setup_test.oni"
                 ms.DB_NAME = "test_new_profile"
-                with patch("onilock.account_manager.typer.echo") as mock_echo:
+                with patch("onilock.core.ui.console.print") as mock_print:
                     from onilock.account_manager import initialize
 
                     initialize(None)
 
-        # Should echo the generated password
-        mock_echo.assert_called()
+        # Should display the generated password via the warning() helper (which uses console.print)
+        mock_print.assert_called()
 
     def test_initialize_already_initialized_exits(self):
         mock_data_engine = MagicMock()
@@ -299,55 +299,60 @@ class TestNewAccount(unittest.TestCase):
 
 class TestListAccounts(unittest.TestCase):
     def test_list_accounts_outputs(self):
+        from io import StringIO
+        from rich.console import Console as RichConsole
+
         profile = _make_profile(with_account=True)
         engine = _make_engine(profile)
 
+        buf = StringIO()
+        test_console = RichConsole(file=buf, no_color=True, width=200)
+
         with patch("onilock.account_manager.get_profile_engine", return_value=engine):
-            with patch("onilock.account_manager.typer.echo") as mock_echo:
+            with patch("onilock.account_manager.console", test_console):
                 from onilock.account_manager import list_accounts
 
                 list_accounts()
 
-        mock_echo.assert_called()
-        # At least one call should contain the account id
-        all_output = " ".join(str(c) for c in mock_echo.call_args_list)
-        self.assertIn("github", all_output)
+        self.assertIn("github", buf.getvalue())
 
     def test_list_accounts_empty(self):
         profile = _make_profile()
         engine = _make_engine(profile)
 
         with patch("onilock.account_manager.get_profile_engine", return_value=engine):
-            with patch("onilock.account_manager.typer.echo"):
-                from onilock.account_manager import list_accounts
+            from onilock.account_manager import list_accounts
 
-                list_accounts()  # Should not raise
+            list_accounts()  # Should not raise
 
 
 class TestListFiles(unittest.TestCase):
     def test_list_files_with_files(self):
+        from io import StringIO
+        from rich.console import Console as RichConsole
+
         profile = _make_profile(with_file=True)
         engine = _make_engine(profile)
 
+        buf = StringIO()
+        test_console = RichConsole(file=buf, no_color=True, width=200)
+
         with patch("onilock.account_manager.get_profile_engine", return_value=engine):
-            with patch("onilock.account_manager.typer.echo") as mock_echo:
+            with patch("onilock.account_manager.console", test_console):
                 from onilock.account_manager import list_files
 
                 list_files()
 
-        mock_echo.assert_called()
-        all_output = " ".join(str(c) for c in mock_echo.call_args_list)
-        self.assertIn("doc1", all_output)
+        self.assertIn("doc1", buf.getvalue())
 
     def test_list_files_empty(self):
         profile = _make_profile()
         engine = _make_engine(profile)
 
         with patch("onilock.account_manager.get_profile_engine", return_value=engine):
-            with patch("onilock.account_manager.typer.echo"):
-                from onilock.account_manager import list_files
+            from onilock.account_manager import list_files
 
-                list_files()
+            list_files()  # Should not raise
 
 
 class TestCopyAccountPassword(unittest.TestCase):

@@ -1,4 +1,6 @@
 from typing import Any, Dict, Optional
+import os
+from pathlib import Path
 import gnupg
 
 from onilock.core.settings import settings
@@ -21,7 +23,7 @@ class BaseEncryptionBackend:
     def list_keys(self, secret=False):
         raise NotImplementedError()
 
-    def get_key_info(self, key_id: Any, key_id_type: Any):
+    def get_key_info(self, key_id: Any, key_id_type: Any, secret: bool = False):
         raise NotImplementedError()
 
     def delete_key(self, key_id: Any, key_id_type: Any, passphrase: Any):
@@ -58,8 +60,8 @@ class EncryptionBackendManager:
     def list_keys(self, secret=False):
         return self.backend.list_keys(secret)
 
-    def get_key_info(self, key_id: Any, key_id_type: Any):
-        return self.backend.get_key_info(key_id, key_id_type)
+    def get_key_info(self, key_id: Any, key_id_type: Any, secret: bool = False):
+        return self.backend.get_key_info(key_id, key_id_type, secret=secret)
 
     def delete_key(self, key_id: Any, key_id_type: Any, passphrase: Any):
         return self.backend.delete_key(key_id, key_id_type, passphrase)
@@ -86,14 +88,37 @@ class GPGEncryptionBackend(BaseEncryptionBackend):
         logger.debug("Initializing GPG Encryption backend.")
         super().__init__(**kwargs)
 
-        self.gpg = gnupg.GPG(gnupghome=kwargs.get("gpg_home", settings.GPG_HOME))
+        gpg_home = kwargs.get("gpg_home", settings.GPG_HOME)
+        if gpg_home:
+            try:
+                os.makedirs(gpg_home, exist_ok=True)
+                os.chmod(gpg_home, 0o700)
+            except PermissionError:
+                if settings.IS_DEV_SOURCE:
+                    gpg_home = str(Path(settings.VAULT_DIR).parent / ".gnupg")
+                    os.makedirs(gpg_home, exist_ok=True)
+                    os.chmod(gpg_home, 0o700)
+                else:
+                    raise
+
+            if settings.IS_DEV_SOURCE and not os.access(gpg_home, os.W_OK):
+                gpg_home = str(Path(settings.VAULT_DIR).parent / ".gnupg")
+                os.makedirs(gpg_home, exist_ok=True)
+                os.chmod(gpg_home, 0o700)
+
+        self.gpg = gnupg.GPG(
+            gnupghome=gpg_home,
+            options=["--pinentry-mode", "loopback"],
+        )
 
         key_info = self.get_key_info(
-            settings.PGP_REAL_NAME, key_id_type=GPGKeyIDType.NAME_REAL
+            settings.PGP_REAL_NAME,
+            key_id_type=GPGKeyIDType.NAME_REAL,
+            secret=True,
         )
 
         if not key_info:
-            logger.info("PGP key was not found.")
+            logger.info("PGP secret key was not found.")
             self.generate_key(
                 name=kwargs.get("name"),
                 email=kwargs.get("email", None) or settings.PGP_EMAIL,
@@ -122,6 +147,23 @@ class GPGEncryptionBackend(BaseEncryptionBackend):
             passphrase=data.get("passphrase", settings.PASSPHRASE),
         )
         key = self.gpg.gen_key(input_data)
+        fingerprint = getattr(key, "fingerprint", None)
+        key_str = str(key).strip() if key is not None else ""
+        if not key_str or (fingerprint is not None and not fingerprint):
+            stderr = getattr(key, "stderr", None)
+            details = stderr.strip() if stderr else "Unknown GPG error."
+            raise RuntimeError(
+                "Failed to generate a PGP key. Ensure gpg and gpg-agent are installed, "
+                "the GPG home directory is writable, and try again. "
+                f"Details: {details}"
+            )
+
+        # Verify secret key presence after generation.
+        if not self.get_key_info(name, key_id_type=GPGKeyIDType.NAME_REAL, secret=True):
+            raise RuntimeError(
+                "PGP key generation did not produce a usable secret key."
+            )
+
         logger.info(f"PGP key '{key}' generated successfully.")
         return key
 
@@ -133,9 +175,10 @@ class GPGEncryptionBackend(BaseEncryptionBackend):
         self,
         key_id: str,
         key_id_type: GPGKeyIDType = GPGKeyIDType.NAME_REAL,
+        secret: bool = False,
     ) -> Optional[Dict]:
         logger.info(f"Retreiving key '{key_id}' info.")
-        keys = self.gpg.list_keys()
+        keys = self.gpg.list_keys(secret=secret)
 
         for key in keys:
             uids = key.get("uids", [])
