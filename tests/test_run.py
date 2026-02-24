@@ -69,8 +69,9 @@ class TestInitializeVaultCommand(unittest.TestCase):
                 ["initialize-vault"],
                 input="\n",
             )
-        # Should have prompted and called initialize
-        mock_init.assert_called_once()
+        # Non-interactive mode requires explicit master password
+        self.assertNotEqual(result.exit_code, 0)
+        mock_init.assert_not_called()
 
 
 class TestNewCommand(unittest.TestCase):

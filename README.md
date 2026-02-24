@@ -18,6 +18,11 @@ With full support for command-line arguments, Onilock empowers users to create c
 - **Copy passwords to clipboard** securely with `onilock copy`
 - **Remove accounts** using `onilock remove`
 - **Generate strong passwords** with `onilock generate`
+- **Export/import vaults** with `onilock export-vault` and `onilock import-vault`
+- **Encrypted backups** with `onilock backup` and `onilock restore`
+- **Profile management** with `onilock profiles list|use`
+- **Key management** with `onilock keys list|delete|rotate-secret`
+- **Environment diagnostics** with `onilock doctor`
 - **Shell completion support** for faster command-line usage
 
 
@@ -92,11 +97,34 @@ onilock generate
 ```
 Creates a strong random password.
 
+### 🔹 Vault Format Version
+```sh
+onilock version
+```
+Prints the current vault format version (v2 for AEAD vaults).
+
 
 ## 🔒 Security
 - OniLock encrypts stored passwords and prevents direct file access.
 - Uses the system keyring for secure storage (if available).
 - Passwords copied to the clipboard are automatically cleared after a short period.
+- Master password protection includes rate limiting and lockouts on repeated failures.
+- Exported vaults can be encrypted with a user-provided passphrase.
+- An audit log is maintained for key vault events.
+
+### Threat Model
+OniLock is a local‑only CLI password manager. It does not sync, upload, or transmit
+vault data. It protects against offline access to the vault files and casual
+local inspection, but **does not** protect against a compromised OS, keyloggers,
+or an attacker with access to the running process. Filenames and timestamps can
+be visible unless explicitly exported with encryption.
+
+### Vault Format & Integrity
+Vault data uses a **versioned format** with AEAD integrity protection (v2 uses
+AES‑GCM). Legacy v1 data is migrated on successful read.
+
+## 📘 Advanced Usage
+See `ADVANCED_USAGE.md` for in-depth workflows, export/import formats, and power-user options.
 
 
 ## 🖥️ Shell Autocompletion
@@ -154,4 +182,3 @@ View full changelog history on `CHANGELOG.md` file.
 ## 📧 Contact
 Author: Mouad Kommir  
 Email: mouadkommir@gmail.com
-

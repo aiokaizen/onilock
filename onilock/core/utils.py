@@ -29,15 +29,26 @@ def naive_utcnow():
     return now.replace(tzinfo=None)
 
 
-def clear_clipboard_after_delay(content: str, delay=60):
-    """Clears the clipboard after a delay if it still contains the given content."""
+def clear_clipboard_after_delay(delay=60):
+    """Clears the clipboard after a delay without reading back content."""
     time.sleep(delay)
     try:
-        cb_content = pyperclip.paste()
-        if cb_content == content:  # Check if clipboard still contains the password
-            pyperclip.copy("")  # Clear the clipboard
+        pyperclip.copy("")
     except Exception:
         pass
+
+
+def clipboard_available() -> bool:
+    try:
+        pyperclip.copy("")
+        return True
+    except Exception:
+        return False
+
+
+def best_effort_zero_bytes(buf: bytearray) -> None:
+    for i in range(len(buf)):
+        buf[i] = 0
 
 
 def get_version() -> str:

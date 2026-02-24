@@ -17,7 +17,10 @@ from onilock.core.decorators import pre_post_hooks
 from onilock.core.keystore import keystore
 from onilock.core.settings import settings
 from onilock.core.logging_manager import logger
+from onilock.core.audit import audit
+from onilock.core.auth import is_locked, record_failure, clear_failures, rate_limit_delay
 from onilock.core.ui import console, success, error, warning, info
+from onilock.core.profiles import register_profile, remove_profile
 from onilock.core.gpg import (
     delete_pgp_key,
 )
@@ -27,9 +30,11 @@ from onilock.core.utils import (
     get_passphrase,
     getlogin,
     get_version,
-    is_password_strong,
+    best_effort_zero_bytes,
+    clipboard_available,
     naive_utcnow,
 )
+from onilock.core.passwords import password_health
 from onilock.db import DatabaseManager
 from onilock.db.models import Profile, Account
 
@@ -40,6 +45,7 @@ __all__ = [
     "copy_account_password",
     "remove_account",
     "delete_profile",
+    "rotate_secret_key",
 ]
 
 
@@ -58,6 +64,12 @@ def verify_master_password(master_password: str):
     Args:
         master_password (str): The master password.
     """
+    locked, remaining = is_locked(settings.DB_NAME)
+    if locked:
+        error(f"Too many failed attempts. Try again in {remaining}s.")
+        audit("auth.locked", remaining=remaining)
+        exit(1)
+
     engine = get_profile_engine()
     if not engine:
         error(
@@ -73,7 +85,36 @@ def verify_master_password(master_password: str):
 
     profile = Profile(**data)
     hashed_master_password = base64.b64decode(profile.master_password)
-    return bcrypt.checkpw(master_password.encode(), hashed_master_password)
+    pwd_buf = bytearray(master_password.encode())
+    try:
+        ok = bcrypt.checkpw(bytes(pwd_buf), hashed_master_password)
+    finally:
+        best_effort_zero_bytes(pwd_buf)
+
+    if not ok:
+        failed = record_failure(settings.DB_NAME)
+        audit("auth.failed", attempts=failed)
+        rate_limit_delay(failed)
+        return False
+
+    clear_failures(settings.DB_NAME)
+
+    # Upgrade bcrypt cost if below current target.
+    try:
+        current_rounds = int(hashed_master_password.decode().split("$")[2])
+    except Exception:
+        current_rounds = settings.BCRYPT_ROUNDS
+
+    if current_rounds < settings.BCRYPT_ROUNDS:
+        new_hash = bcrypt.hashpw(
+            master_password.encode(),
+            bcrypt.gensalt(rounds=settings.BCRYPT_ROUNDS),
+        )
+        profile.master_password = base64.b64encode(new_hash).decode()
+        engine.write(profile.model_dump())
+        audit("auth.kdf.upgrade", from_rounds=current_rounds, to_rounds=settings.BCRYPT_ROUNDS)
+
+    return True
 
 
 def _load_setup_data(setup_engine):
@@ -152,7 +193,9 @@ def initialize(master_password: Optional[str] = None):
     else:
         pass
 
-    hashed_master_password = bcrypt.hashpw(master_password.encode(), bcrypt.gensalt())
+    hashed_master_password = bcrypt.hashpw(
+        master_password.encode(), bcrypt.gensalt(rounds=settings.BCRYPT_ROUNDS)
+    )
     b64_hashed_master_password = base64.b64encode(hashed_master_password).decode()
 
     profile = Profile(
@@ -163,6 +206,8 @@ def initialize(master_password: Optional[str] = None):
         files=[],
     )
     engine.write(profile.model_dump())
+    audit("vault.init", profile=name, vault_version=profile.vault_version)
+    register_profile(name)
 
     logger.info("Updating the current setup file.")
 
@@ -225,19 +270,36 @@ def new_account(
     logger.debug(f"Encrypted password: {encrypted_password.decode()}")
     b64_encrypted_password = base64.b64encode(encrypted_password).decode()
     logger.debug(f"B64 Encrypted password: {b64_encrypted_password}")
+    existing_passwords = []
+    for acct in profile.accounts:
+        try:
+            encrypted = base64.b64decode(acct.encrypted_password)
+            existing_passwords.append(cipher.decrypt(encrypted).decode())
+        except Exception:
+            continue
+
+    health = password_health(password, existing_passwords)
+    if health["strength"] != "strong":
+        warning(
+            "Password health warning: "
+            + "; ".join(health["reasons"])
+            + f" (entropy {health['entropy_bits']} bits)"
+        )
+
     password_model = Account(
         id=name,
         encrypted_password=b64_encrypted_password,
         username=username or "",
         url=url,
         description=description,
-        is_weak_password=not is_password_strong(password),
+        is_weak_password=health["strength"] != "strong",
         created_at=int(naive_utcnow().timestamp()),
     )
     profile.accounts.append(password_model)
     engine.write(profile.model_dump())
     logger.info("Password saved successfully.")
     success(f"Account [bold]{name}[/bold] added to the vault.")
+    audit("account.added", account=name)
     return password
 
 
@@ -367,18 +429,27 @@ def copy_account_password(id: str | int):
     cipher = Fernet(settings.SECRET_KEY.encode())
     encrypted_password = base64.b64decode(account.encrypted_password)
     decrypted_password = cipher.decrypt(encrypted_password).decode()
+    if not settings.CLIPBOARD_ENABLED:
+        error("Clipboard is disabled. Set ONI_CLIPBOARD=true to enable.")
+        exit(1)
+
+    if not clipboard_available():
+        error("Clipboard is not available on this system.")
+        exit(1)
+
     pyperclip.copy(decrypted_password)
     logger.info(f"Password {account.id} copied to clipboard successfully.")
     success(
         f"Password for [bold]{account.id}[/bold] copied to clipboard. "
         "Clears automatically in [bold]10s[/bold]."
     )
+    audit("account.copied", account=account.id)
 
     logger.debug("Password will be cleared in 10 seconds.")
 
     process = multiprocessing.Process(
         target=clear_clipboard_after_delay,
-        args=(decrypted_password, 10),
+        args=(10,),
     )
     process.start()
 
@@ -420,6 +491,7 @@ def remove_account(name: str):
     profile.remove_account(name)
     engine.write(profile.model_dump())
     success(f"Account [bold]{name}[/bold] removed.")
+    audit("account.removed", account=name)
 
 
 @pre_post_hooks(pre_command, post_command)
@@ -447,3 +519,58 @@ def delete_profile(master_password: str):
 
     shutil.rmtree(settings.VAULT_DIR)
     success("All user data has been permanently deleted.")
+    remove_profile(settings.DB_NAME)
+    audit("vault.deleted", profile=settings.DB_NAME)
+
+
+def rotate_secret_key():
+    """
+    Rotate the vault secret key and re-encrypt stored passwords.
+    """
+    engine = get_profile_engine()
+    if not engine:
+        error(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+        )
+        exit(1)
+
+    data = engine.read()
+    if not data:
+        error(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+        )
+        exit(1)
+
+    profile = Profile(**data)
+    old_key = settings.SECRET_KEY
+    new_key = Fernet.generate_key().decode()
+    cipher_old = Fernet(old_key.encode())
+    cipher_new = Fernet(new_key.encode())
+
+    for account in profile.accounts:
+        encrypted_password = base64.b64decode(account.encrypted_password)
+        decrypted_password = cipher_old.decrypt(encrypted_password)
+        reencrypted = cipher_new.encrypt(decrypted_password)
+        account.encrypted_password = base64.b64encode(reencrypted).decode()
+
+    engine.write(profile.model_dump())
+
+    # Re-encrypt setup file path
+    db_manager = DatabaseManager(
+        database_url=settings.SETUP_FILEPATH, is_encrypted=True
+    )
+    setup_engine = db_manager.get_engine()
+    setup_data = setup_engine.read()
+    entry = setup_data.get(settings.DB_NAME)
+    if entry:
+        encrypted_filepath = base64.b64decode(entry["filepath"])
+        decrypted_path = cipher_old.decrypt(encrypted_filepath)
+        entry["filepath"] = base64.b64encode(
+            cipher_new.encrypt(decrypted_path)
+        ).decode()
+        setup_engine.write(setup_data)
+
+    key_name = str(uuid.uuid5(uuid.NAMESPACE_DNS, getlogin())).split("-")[-1]
+    keystore.set_password(key_name, new_key)
+    settings.SECRET_KEY = new_key
+    audit("keys.secret.rotated")

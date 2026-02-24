@@ -51,6 +51,11 @@ class Settings:
             else:
                 raise
 
+        self.BASE_DIR = self.VAULT_DIR.parent
+        self.PROFILE_PATH = self.BASE_DIR / ".profile"
+        self.AUDIT_LOG = self.BASE_DIR / "audit.log"
+        self.BACKUP_DIR = self.BASE_DIR / "backups"
+
         self.DEBUG = False
         try:
             debug = str_to_bool(os.environ.get(DEBUG_ENV_NAME, "false"))
@@ -62,7 +67,13 @@ class Settings:
         self.DB_BACKEND = DBBackEndEnum(os.environ.get("ONI_DB_BACKEND", "Json"))
         self.DB_URL = os.environ.get("ONI_DB_URL")
         default_db_name = f"{getlogin()}_dev" if is_dev_source else getlogin()
-        self.DB_NAME = os.environ.get("ONI_DB_NAME", default_db_name)
+        profile_name = None
+        if not os.environ.get("ONI_DB_NAME") and self.PROFILE_PATH.exists():
+            try:
+                profile_name = self.PROFILE_PATH.read_text().strip() or None
+            except OSError:
+                profile_name = None
+        self.DB_NAME = os.environ.get("ONI_DB_NAME", profile_name or default_db_name)
         self.DB_HOST = os.environ.get("ONI_DB_HOST")
         self.DB_USER = os.environ.get("ONI_DB_USER")
         self.DB_PWD = os.environ.get("ONI_DB_PWD")
@@ -92,6 +103,26 @@ class Settings:
         )
         self.PGP_EMAIL: str = "pgp@onilock.com"
         self.CHECKSUM_SEPARATOR = "(:|?"
+        self.BCRYPT_ROUNDS = int(os.environ.get("ONI_BCRYPT_ROUNDS", "12"))
+        self.LOCKOUT_ATTEMPTS = int(os.environ.get("ONI_LOCKOUT_ATTEMPTS", "5"))
+        self.LOCKOUT_WINDOW_SEC = int(
+            os.environ.get("ONI_LOCKOUT_WINDOW_SEC", "300")
+        )
+        self.LOCKOUT_DURATION_SEC = int(
+            os.environ.get("ONI_LOCKOUT_DURATION_SEC", "300")
+        )
+        self.RATE_LIMIT_BASE_DELAY = float(
+            os.environ.get("ONI_RATE_LIMIT_BASE_DELAY", "0.5")
+        )
+        self.RATE_LIMIT_MAX_DELAY = float(
+            os.environ.get("ONI_RATE_LIMIT_MAX_DELAY", "2.0")
+        )
+        self.CLIPBOARD_ENABLED = os.environ.get("ONI_CLIPBOARD", "true").lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        )
 
         try:
             db_port = int(os.environ.get("ONI_DB_PORT", "0"))

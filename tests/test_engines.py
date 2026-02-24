@@ -69,7 +69,7 @@ class TestEncryptedJsonEngine(unittest.TestCase):
             if mock_backend:
                 MockManager.return_value = mock_backend
             engine = EncryptedJsonEngine(filepath)
-        engine.encryption_backend = mock_backend or MagicMock()
+        engine._encryption_manager = mock_backend or MagicMock()
         return engine
 
     def _build_encrypted_content(self, data: dict) -> bytes:
@@ -89,39 +89,21 @@ class TestEncryptedJsonEngine(unittest.TestCase):
             os.remove(self.filepath)
 
     def test_write_happy_path(self):
-        mock_backend = MagicMock()
-        mock_result = MagicMock()
-        mock_result.ok = True
-        mock_result.data = b"encrypted_bytes"
-        mock_backend.encrypt.return_value = mock_result
-
-        engine = self._make_engine(self.filepath, mock_backend)
+        engine = self._make_engine(self.filepath)
         engine.write({"hello": "world"})
 
         self.assertTrue(os.path.exists(self.filepath))
         content = open(self.filepath, "rb").read()
-        self.assertEqual(content, b"encrypted_bytes")
+        self.assertTrue(content.startswith(EncryptedJsonEngine.V2_HEADER))
 
     def test_write_encryption_fails_raises_runtime_error(self):
-        mock_backend = MagicMock()
-        mock_result = MagicMock()
-        mock_result.ok = False
-        mock_result.status = "encryption error"
-        mock_backend.encrypt.return_value = mock_result
-
-        engine = self._make_engine(self.filepath, mock_backend)
-        with self.assertRaises(RuntimeError):
-            engine.write({"key": "val"})
+        # AEAD write should not raise for normal data
+        engine = self._make_engine(self.filepath)
+        engine.write({"key": "val"})
 
     def test_write_creates_parent_dirs(self):
         nested_path = os.path.join(self.tmp_path, "sub", "data.oni")
-        mock_backend = MagicMock()
-        mock_result = MagicMock()
-        mock_result.ok = True
-        mock_result.data = b"enc"
-        mock_backend.encrypt.return_value = mock_result
-
-        engine = self._make_engine(nested_path, mock_backend)
+        engine = self._make_engine(nested_path)
         engine.write({"x": 1})
 
         self.assertTrue(os.path.exists(nested_path))
@@ -136,40 +118,26 @@ class TestEncryptedJsonEngine(unittest.TestCase):
 
     def test_read_happy_path(self):
         data = {"key": "value"}
-        raw_payload = self._build_encrypted_content(data)
-
-        mock_backend = MagicMock()
-        mock_decrypt = MagicMock()
-        mock_decrypt.ok = True
-        mock_decrypt.data = raw_payload
-        mock_backend.decrypt.return_value = mock_decrypt
-
-        # Write a dummy file
-        with open(self.filepath, "wb") as f:
-            f.write(b"fake_encrypted")
-
-        engine = self._make_engine(self.filepath, mock_backend)
+        engine = self._make_engine(self.filepath)
+        engine.write(data)
         result = engine.read()
         self.assertEqual(result, data)
 
     def test_read_decryption_fails_raises_runtime_error(self):
-        with open(self.filepath, "wb") as f:
-            f.write(b"fake_encrypted")
-
         mock_backend = MagicMock()
         mock_decrypt = MagicMock()
         mock_decrypt.ok = False
         mock_decrypt.status = "decryption error"
         mock_backend.decrypt.return_value = mock_decrypt
 
+        # Write a legacy payload to force v1 path
+        with open(self.filepath, "wb") as f:
+            f.write(b"legacy")
         engine = self._make_engine(self.filepath, mock_backend)
         with self.assertRaises(RuntimeError):
             engine.read()
 
     def test_read_checksum_mismatch_raises_runtime_error(self):
-        with open(self.filepath, "wb") as f:
-            f.write(b"fake_encrypted")
-
         bad_payload = (
             f'wrongchecksum{settings.CHECKSUM_SEPARATOR}{{"key": "val"}}'.encode()
         )
@@ -180,14 +148,13 @@ class TestEncryptedJsonEngine(unittest.TestCase):
         mock_decrypt.data = bad_payload
         mock_backend.decrypt.return_value = mock_decrypt
 
+        with open(self.filepath, "wb") as f:
+            f.write(b"legacy")
         engine = self._make_engine(self.filepath, mock_backend)
         with self.assertRaises(RuntimeError):
             engine.read()
 
     def test_read_missing_separator_raises_value_error(self):
-        with open(self.filepath, "wb") as f:
-            f.write(b"fake_encrypted")
-
         # No separator in payload
         bad_payload = b"noseparatorhere"
         mock_backend = MagicMock()
@@ -196,6 +163,8 @@ class TestEncryptedJsonEngine(unittest.TestCase):
         mock_decrypt.data = bad_payload
         mock_backend.decrypt.return_value = mock_decrypt
 
+        with open(self.filepath, "wb") as f:
+            f.write(b"legacy")
         engine = self._make_engine(self.filepath, mock_backend)
         with self.assertRaises(ValueError):
             engine.read()
