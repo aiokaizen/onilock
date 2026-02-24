@@ -1,5 +1,14 @@
 # Version 1
 
+## v1.7.2
+- Introduce comprehensive test suite with 238 tests achieving 99%+ code coverage.
+- Migrate test runner from `unittest` to `pytest` with `pytest-cov`; enforce 95% coverage threshold on every run.
+- Overhaul CI/CD pipeline: replace manual `publish-release.sh` workflow with fully automated GitHub Actions.
+    - Pull requests to `master` trigger the test suite automatically.
+    - Pushes to `master` run tests and, on a new version, create the git tag, GitHub release, and PyPI publication in a single atomic pipeline step.
+- Add `DEVELOPER_GUIDE.md` covering setup, running the project, testing, code style, and the PR workflow.
+- Minor bug fixes.
+
 ## v1.7.0
 - Implement file encryption capabilities.
     - Possibility to encrypt any file in your system and add it to the vault.
