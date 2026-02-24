@@ -144,6 +144,14 @@ Contributions are welcome! Feel free to submit issues and pull requests.
 
 ## 📝 Changelog
 
+### v1.8.0
+- Introduce versioned AEAD vault format (v2, AES-GCM) with automatic legacy migration.
+- Add export/import encryption, audit logging, and backup/restore workflows.
+- Add profile management, key management commands, and environment diagnostics.
+- Harden master-password handling with rate limiting, lockouts, and KDF upgrades.
+- Add password health checks (entropy, reuse, common password detection) and improved clipboard hygiene.
+- Add Poweruser guide and expanded documentation.
+
 ### v1.7.3
 - Fix infinite recursion in `remove-account`, wrong password length in `generate_random_password`, and temp file leak in `edit-file`/`read-file`.
 - Fix AES-CBC IV reuse and weak key derivation in `VaultKeyStore`; keys are now random and stored in a protected file.
@@ -170,11 +178,6 @@ Contributions are welcome! Feel free to submit issues and pull requests.
 - Implement support for terminal-based distros.
 - Implement git-hub actions for auto-deployment when a new release is created.
 - Improve project structure, and implement some design patterns
-
-### v1.5.4
-- Update `version` command
-- Ignore case for `delete` and `copy` commands
-- Detect file corruption and manipulation using checksums
 
 View full changelog history on `CHANGELOG.md` file.
 
