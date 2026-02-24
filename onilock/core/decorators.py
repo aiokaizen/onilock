@@ -48,10 +48,12 @@ def pre_post_hooks(
     post_kwargs = post_kwargs or {}
 
     def decorator(func):
+        @functools.wraps(func)
         def wrapper(*args, **kwargs):
             pre(**pre_kwargs) if pre else None
-            func(*args, **kwargs)
+            result = func(*args, **kwargs)
             post(**post_kwargs) if post else None
+            return result
 
         return wrapper
 

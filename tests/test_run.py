@@ -69,8 +69,9 @@ class TestInitializeVaultCommand(unittest.TestCase):
                 ["initialize-vault"],
                 input="\n",
             )
-        # Should have prompted and called initialize
-        mock_init.assert_called_once()
+        # Non-interactive mode requires explicit master password
+        self.assertNotEqual(result.exit_code, 0)
+        mock_init.assert_not_called()
 
 
 class TestNewCommand(unittest.TestCase):
@@ -162,7 +163,7 @@ class TestDeleteFileCommand(unittest.TestCase):
         from onilock.run import app, filemanager
 
         with patch.object(filemanager, "delete") as mock_delete:
-            result = runner.invoke(app, ["delete-file", "doc1"])
+            result = runner.invoke(app, ["delete-file", "doc1"], input="y\n")
         mock_delete.assert_called_once_with("doc1")
 
 
@@ -215,9 +216,12 @@ class TestRemoveAccountCommand(unittest.TestCase):
     def test_remove_account_command(self):
         from onilock.run import app
 
-        with patch("onilock.run.remove_account") as mock_remove:
-            result = runner.invoke(app, ["remove-account", "github"])
+        # Patch am_remove_account (the aliased import in run.py) so we verify
+        # the CLI delegates to the actual business-logic function, not itself.
+        with patch("onilock.run.am_remove_account") as mock_remove:
+            result = runner.invoke(app, ["remove-account", "github"], input="y\n")
         mock_remove.assert_called_once_with("github")
+        self.assertEqual(result.exit_code, 0)
 
 
 class TestEraseUserDataCommand(unittest.TestCase):
@@ -228,6 +232,7 @@ class TestEraseUserDataCommand(unittest.TestCase):
             result = runner.invoke(
                 app,
                 ["erase-user-data", "--master-password=strongpassword"],
+                input="y\n",
             )
         mock_delete.assert_called_once_with("strongpassword")
 

@@ -12,12 +12,17 @@ With full support for command-line arguments, Onilock empowers users to create c
 
 
 ## 🚀 Features
-- **Initialize a secure profile** using `onilock init`
+- **Initialize a secure profile** using `onilock initialize-vault`
 - **Store new accounts** with `onilock new`
 - **List stored accounts** using `onilock list`
 - **Copy passwords to clipboard** securely with `onilock copy`
-- **Remove accounts** using `onilock remove`
-- **Generate strong passwords** with `onilock generate`
+- **Remove accounts** using `onilock remove-account`
+- **Generate strong passwords** with `onilock generate-pwd`
+- **Export/import vaults** with `onilock export-vault` and `onilock import-vault`
+- **Encrypted backups** with `onilock backup` and `onilock restore`
+- **Profile management** with `onilock profiles list|use`
+- **Key management** with `onilock keys list|delete|rotate-secret`
+- **Environment diagnostics** with `onilock doctor`
 - **Shell completion support** for faster command-line usage
 
 
@@ -41,7 +46,7 @@ pipx install onilock
 
 ## ⚠️  Issues
 
-If you encounter any issues with the `init` command, make sure the following dependancies are setup in your system:
+If you encounter any issues with the `initialize-vault` command, make sure the following dependencies are setup in your system:
 
 1. **Ensure xclip and gpg are installed**. If not, run the following command
 ```sh
@@ -59,7 +64,7 @@ onilock --help
 ### 🔹 Initialize OniLock
 Before using OniLock, initialize your profile:
 ```sh
-onilock init
+onilock initialize-vault
 ```
 
 ### 🔹 Add a New Account
@@ -82,21 +87,47 @@ This copies the password to your clipboard securely.
 
 ### 🔹 Remove an Account
 ```sh
-onilock remove <account_name>
+onilock remove-account <account_name>
 ```
 Deletes the stored credentials.
 
 ### 🔹 Generate a Secure Password
 ```sh
-onilock generate
+onilock generate-pwd
 ```
 Creates a strong random password.
+
+### 🔹 Vault Format Version
+```sh
+onilock version
+```
+Prints the current vault format version (v2 for AEAD vaults).
+
+Note: In non-interactive environments, `initialize-vault` and encrypted export/import
+require explicit flags (e.g., `--master-password`, `--passphrase`).
 
 
 ## 🔒 Security
 - OniLock encrypts stored passwords and prevents direct file access.
 - Uses the system keyring for secure storage (if available).
 - Passwords copied to the clipboard are automatically cleared after a short period.
+- Master password protection includes rate limiting and lockouts on repeated failures.
+- Exported vaults can be encrypted with a user-provided passphrase.
+- An audit log is maintained for key vault events.
+
+### Threat Model
+OniLock is a local‑only CLI password manager. It does not sync, upload, or transmit
+vault data. It protects against offline access to the vault files and casual
+local inspection, but **does not** protect against a compromised OS, keyloggers,
+or an attacker with access to the running process. Filenames and timestamps can
+be visible unless explicitly exported with encryption.
+
+### Vault Format & Integrity
+Vault data uses a **versioned format** with AEAD integrity protection (v2 uses
+AES‑GCM). Legacy v1 data is migrated on successful read.
+
+## 📘 Advanced Usage
+See `ADVANCED_USAGE.md` for in-depth workflows, export/import formats, and power-user options.
 
 
 ## 🖥️ Shell Autocompletion
@@ -115,6 +146,21 @@ Contributions are welcome! Feel free to submit issues and pull requests.
 
 
 ## 📝 Changelog
+
+### v1.8.0
+- Introduce versioned AEAD vault format (v2, AES-GCM) with automatic legacy migration.
+- Add export/import encryption, audit logging, and backup/restore workflows.
+- Add profile management, key management commands, and environment diagnostics.
+- Harden master-password handling with rate limiting, lockouts, and KDF upgrades.
+- Add password health checks (entropy, reuse, common password detection) and improved clipboard hygiene.
+- Add Poweruser guide and expanded documentation.
+
+### v1.7.3
+- Fix infinite recursion in `remove-account`, wrong password length in `generate_random_password`, and temp file leak in `edit-file`/`read-file`.
+- Fix AES-CBC IV reuse and weak key derivation in `VaultKeyStore`; keys are now random and stored in a protected file.
+- Fix GPG utility crashes when a key has no UIDs or when deleting a non-existent key.
+- Fix Pydantic mutable default shared across model instances.
+- Expand test suite to 243 tests; replace observed-behavior assertions with contract-based assertions.
 
 ### v1.7.2
 - Introduce comprehensive test suite with 238 tests achieving 99%+ code coverage.
@@ -136,21 +182,9 @@ Contributions are welcome! Feel free to submit issues and pull requests.
 - Implement git-hub actions for auto-deployment when a new release is created.
 - Improve project structure, and implement some design patterns
 
-### v1.5.4
-- Update `version` command
-- Ignore case for `delete` and `copy` commands
-- Detect file corruption and manipulation using checksums
-
-### v1.5.0
-- Rename shadow to vault
-- Clear clipboard after 25 seconds if it still contains the password.
-- Encrypt json files using PGP key instead of storing them as raw json file.
-- Detect file corruption and manipulation using checksums
-
 View full changelog history on `CHANGELOG.md` file.
 
 
 ## 📧 Contact
 Author: Mouad Kommir  
 Email: mouadkommir@gmail.com
-

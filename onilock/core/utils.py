@@ -29,15 +29,26 @@ def naive_utcnow():
     return now.replace(tzinfo=None)
 
 
-def clear_clipboard_after_delay(content: str, delay=60):
-    """Clears the clipboard after a delay if it still contains the given content."""
+def clear_clipboard_after_delay(delay=60):
+    """Clears the clipboard after a delay without reading back content."""
     time.sleep(delay)
     try:
-        cb_content = pyperclip.paste()
-        if cb_content == content:  # Check if clipboard still contains the password
-            pyperclip.copy("")  # Clear the clipboard
+        pyperclip.copy("")
     except Exception:
         pass
+
+
+def clipboard_available() -> bool:
+    try:
+        pyperclip.copy("")
+        return True
+    except Exception:
+        return False
+
+
+def best_effort_zero_bytes(buf: bytearray) -> None:
+    for i in range(len(buf)):
+        buf[i] = 0
 
 
 def get_version() -> str:
@@ -71,21 +82,56 @@ def generate_random_password(
     """
     characters = string.ascii_letters + string.digits
     punctuation = "@$!%*?&_}{()-=+"
-    password = [
+    required = [
         secrets.choice(string.ascii_lowercase),
         secrets.choice(string.ascii_uppercase),
         secrets.choice(string.digits),
     ]
     if include_special_characters:
-        password.append(secrets.choice(punctuation))
+        required.append(secrets.choice(punctuation))
         characters += punctuation
 
-    password += [secrets.choice(characters) for _ in range(length)]
+    remaining = max(0, length - len(required))
+    password = required + [secrets.choice(characters) for _ in range(remaining)]
 
     # Shuffle password in-place.
     random.shuffle(password)
 
     return "".join(password)
+
+
+def is_password_strong(password: str) -> bool:
+    """
+    Basic strength check for passwords.
+
+    Strong if it has enough length and character variety.
+    """
+    if not password:
+        return False
+
+    length = len(password)
+    if length < 12:
+        return False
+    if password.strip() != password:
+        return False
+
+    has_lower = any(c.islower() for c in password)
+    has_upper = any(c.isupper() for c in password)
+    has_digit = any(c.isdigit() for c in password)
+    has_symbol = any(not c.isalnum() for c in password)
+    categories = sum([has_lower, has_upper, has_digit, has_symbol])
+
+    score = 0
+    if length >= 12:
+        score += 1
+    if length >= 16:
+        score += 1
+    if categories >= 3:
+        score += 1
+    if categories == 4:
+        score += 1
+
+    return score >= 3
 
 
 def generate_key() -> str:
