@@ -116,6 +116,12 @@ Contributions are welcome! Feel free to submit issues and pull requests.
 
 ## 📝 Changelog
 
+### v1.7.2
+- Introduce comprehensive test suite with 238 tests achieving 99%+ code coverage.
+- Migrate test runner from `unittest` to `pytest` with `pytest-cov`; enforce 95% coverage threshold on every run.
+- Overhaul CI/CD pipeline: tests run automatically on PRs and pushes to `master`; releases and PyPI publication are now fully automated on version bump.
+- Add `DEVELOPER_GUIDE.md` covering setup, testing, and the contribution workflow.
+
 ### v1.7.0
 - Implement file encryption capabilities.
     - Possibility to encrypt any file in your system and add it to the vault.
