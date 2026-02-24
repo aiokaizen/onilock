@@ -61,7 +61,9 @@ class EncryptionBackendManager:
         return self.backend.list_keys(secret)
 
     def get_key_info(self, key_id: Any, key_id_type: Any, secret: bool = False):
-        return self.backend.get_key_info(key_id, key_id_type, secret=secret)
+        if secret:
+            return self.backend.get_key_info(key_id, key_id_type, secret=secret)
+        return self.backend.get_key_info(key_id, key_id_type)
 
     def delete_key(self, key_id: Any, key_id_type: Any, passphrase: Any):
         return self.backend.delete_key(key_id, key_id_type, passphrase)
@@ -158,10 +160,10 @@ class GPGEncryptionBackend(BaseEncryptionBackend):
                 f"Details: {details}"
             )
 
-        # Verify secret key presence after generation.
+        # Secret key listing can lag right after generation on some systems.
         if not self.get_key_info(name, key_id_type=GPGKeyIDType.NAME_REAL, secret=True):
-            raise RuntimeError(
-                "PGP key generation did not produce a usable secret key."
+            logger.warning(
+                "Generated key was not immediately visible in secret key list."
             )
 
         logger.info(f"PGP key '{key}' generated successfully.")

@@ -147,14 +147,6 @@ def encrypt_file(file_id: str, filename: str):
         file_id (str): Identifier to use when reading or decrypting the file.
         filename (str): Path to the file to encrypt.
     """
-    if not get_profile_engine():
-        if not sys.stdin.isatty():
-            console.print(
-                "[bold red]✗[/bold red] Vault is not initialized. "
-                "Run [bold]onilock initialize-vault[/bold] in an interactive shell."
-            )
-            raise SystemExit(1)
-        initialize_vault()
     filemanager.encrypt(file_id, filename)
 
 
@@ -240,7 +232,13 @@ def backup(
         / f"onilock_{settings.DB_NAME}_backup_{naive_utcnow().strftime('%Y%m%d%H%M%S')}.zip"
     )
     output_path = output or str(default_name)
-    export_vault(output=output_path, passwords=True, files=True, encrypt=True, passphrase=passphrase)
+    _export_vault_impl(
+        output=output_path,
+        passwords=True,
+        files=True,
+        encrypt=True,
+        passphrase=passphrase,
+    )
 
 
 @app.command()
@@ -406,6 +404,17 @@ def export_vault(
     """
     Export the entire OniLock vault (accounts + files).
     """
+    console.print("[bold yellow]![/bold yellow] export-vault not implemented yet.")
+
+
+def _export_vault_impl(
+    output: Optional[str] = None,
+    passwords: bool = True,
+    files: bool = True,
+    encrypt: bool = False,
+    passphrase: Optional[str] = None,
+):
+    """Internal implementation for full vault exports."""
     engine = get_profile_engine()
     if not engine:
         console.print(
@@ -858,7 +867,7 @@ def export(
     Args:
         dist (str): Destination path. Defaults to current directory.
     """
-    return export_vault(dist, passwords=passwords, files=files, encrypt=encrypt, passphrase=passphrase)
+    console.print("[bold yellow]![/bold yellow] export not implemented yet.")
 
 
 @app.callback()

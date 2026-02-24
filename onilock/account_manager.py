@@ -31,7 +31,6 @@ from onilock.core.utils import (
     getlogin,
     get_version,
     best_effort_zero_bytes,
-    clipboard_available,
     naive_utcnow,
 )
 from onilock.core.passwords import password_health
@@ -100,19 +99,20 @@ def verify_master_password(master_password: str):
     clear_failures(settings.DB_NAME)
 
     # Upgrade bcrypt cost if below current target.
+    target_rounds = _get_bcrypt_rounds()
     try:
         current_rounds = int(hashed_master_password.decode().split("$")[2])
     except Exception:
-        current_rounds = settings.BCRYPT_ROUNDS
+        current_rounds = target_rounds
 
-    if current_rounds < settings.BCRYPT_ROUNDS:
+    if current_rounds < target_rounds:
         new_hash = bcrypt.hashpw(
             master_password.encode(),
-            bcrypt.gensalt(rounds=settings.BCRYPT_ROUNDS),
+            bcrypt.gensalt(rounds=target_rounds),
         )
         profile.master_password = base64.b64encode(new_hash).decode()
         engine.write(profile.model_dump())
-        audit("auth.kdf.upgrade", from_rounds=current_rounds, to_rounds=settings.BCRYPT_ROUNDS)
+        audit("auth.kdf.upgrade", from_rounds=current_rounds, to_rounds=target_rounds)
 
     return True
 
@@ -132,6 +132,15 @@ def _load_setup_data(setup_engine):
             )
             return None
         raise
+
+
+def _get_bcrypt_rounds() -> int:
+    rounds = getattr(settings, "BCRYPT_ROUNDS", 12)
+    try:
+        rounds = int(rounds)
+    except (TypeError, ValueError):
+        rounds = 12
+    return rounds if rounds >= 4 else 12
 
 
 def get_profile_engine():
@@ -194,7 +203,7 @@ def initialize(master_password: Optional[str] = None):
         pass
 
     hashed_master_password = bcrypt.hashpw(
-        master_password.encode(), bcrypt.gensalt(rounds=settings.BCRYPT_ROUNDS)
+        master_password.encode(), bcrypt.gensalt(rounds=_get_bcrypt_rounds())
     )
     b64_hashed_master_password = base64.b64encode(hashed_master_password).decode()
 
@@ -433,11 +442,11 @@ def copy_account_password(id: str | int):
         error("Clipboard is disabled. Set ONI_CLIPBOARD=true to enable.")
         exit(1)
 
-    if not clipboard_available():
+    try:
+        pyperclip.copy(decrypted_password)
+    except Exception:
         error("Clipboard is not available on this system.")
         exit(1)
-
-    pyperclip.copy(decrypted_password)
     logger.info(f"Password {account.id} copied to clipboard successfully.")
     success(
         f"Password for [bold]{account.id}[/bold] copied to clipboard. "
@@ -519,8 +528,12 @@ def delete_profile(master_password: str):
 
     shutil.rmtree(settings.VAULT_DIR)
     success("All user data has been permanently deleted.")
-    remove_profile(settings.DB_NAME)
-    audit("vault.deleted", profile=settings.DB_NAME)
+    profile_name = getattr(settings, "DB_NAME", None)
+    if isinstance(profile_name, str) and profile_name:
+        remove_profile(profile_name)
+        audit("vault.deleted", profile=profile_name)
+    else:
+        audit("vault.deleted")
 
 
 def rotate_secret_key():

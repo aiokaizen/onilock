@@ -6,3 +6,4 @@ dist
 .coverage
 htmlcov
 .venv
+.onilock_dev
