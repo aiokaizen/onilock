@@ -215,9 +215,12 @@ class TestRemoveAccountCommand(unittest.TestCase):
     def test_remove_account_command(self):
         from onilock.run import app
 
-        with patch("onilock.run.remove_account") as mock_remove:
+        # Patch am_remove_account (the aliased import in run.py) so we verify
+        # the CLI delegates to the actual business-logic function, not itself.
+        with patch("onilock.run.am_remove_account") as mock_remove:
             result = runner.invoke(app, ["remove-account", "github"])
         mock_remove.assert_called_once_with("github")
+        self.assertEqual(result.exit_code, 0)
 
 
 class TestEraseUserDataCommand(unittest.TestCase):

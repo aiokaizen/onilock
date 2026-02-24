@@ -118,23 +118,43 @@ class TestGetVersion(unittest.TestCase):
 
 
 class TestGenerateRandomPassword(unittest.TestCase):
-    def test_default_length(self):
-        # default: include_special_characters=True → 3 required + 1 special + length random
-        pwd = generate_random_password(12)
-        self.assertEqual(len(pwd), 12 + 3 + 1)
+    def test_length_is_respected(self):
+        """The output length must equal the requested length."""
+        for n in (8, 12, 20, 32):
+            with self.subTest(length=n):
+                pwd = generate_random_password(n)
+                self.assertEqual(len(pwd), n)
 
-    def test_custom_length(self):
-        # include_special_characters=True (default) → 3 + 1 + 20
-        pwd = generate_random_password(20)
-        self.assertEqual(len(pwd), 24)
+    def test_length_without_special_chars(self):
+        pwd = generate_random_password(12, include_special_characters=False)
+        self.assertEqual(len(pwd), 12)
 
-    def test_with_special_chars(self):
-        pwd = generate_random_password(12, include_special_characters=True)
-        self.assertIsInstance(pwd, str)
-        # 3 required + 1 special + 12 random = 16
-        self.assertEqual(len(pwd), 16)
+    def test_contains_uppercase(self):
+        """Password must always contain at least one uppercase letter."""
+        for _ in range(20):
+            pwd = generate_random_password(12)
+            self.assertTrue(any(c.isupper() for c in pwd))
 
-    def test_without_special_chars(self):
+    def test_contains_lowercase(self):
+        """Password must always contain at least one lowercase letter."""
+        for _ in range(20):
+            pwd = generate_random_password(12)
+            self.assertTrue(any(c.islower() for c in pwd))
+
+    def test_contains_digit(self):
+        """Password must always contain at least one digit."""
+        for _ in range(20):
+            pwd = generate_random_password(12)
+            self.assertTrue(any(c.isdigit() for c in pwd))
+
+    def test_contains_special_when_requested(self):
+        """Password must include at least one special character when requested."""
+        special = set("@$!%*?&_}{()-=+")
+        for _ in range(20):
+            pwd = generate_random_password(12, include_special_characters=True)
+            self.assertTrue(any(c in special for c in pwd))
+
+    def test_no_special_chars_when_excluded(self):
         special = "@$!%*?&_}{()-=+"
         for _ in range(20):
             pwd = generate_random_password(12, include_special_characters=False)

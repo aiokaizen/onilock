@@ -157,33 +157,22 @@ class FileEncryptionManager:
 
         decrypted_data = self.decrypt(file_id)
 
+        readonly_args = ["-R", "-m"] if readonly else []
+
         with tempfile.NamedTemporaryFile(
             mode="rb+", delete=False, dir="/dev/shm"
         ) as tmp:
             tmp.write(decrypted_data)
-            tmp.flush()  # Ensure content is written
+            tmp.flush()
+            tmp_path = tmp.name
 
-            readonly_args = []
-            if readonly:
-                readonly_args = [
-                    "-R",  # Read only
-                    "-m",  # Forbid writes
-                ]
-
-            subprocess.run(
-                [
-                    "vim",  # Start vim with the decrypted file as input.
-                    "-n",  # No swap file
-                    *readonly_args,
-                    tmp.name,
-                ],
-            )
-
-            if readonly:
-                return
-
-            # else: write the new data back to the vault.
-            self.encrypt(file_id, tmp.name, override=True, update_db=False)
+        try:
+            subprocess.run(["vim", "-n", *readonly_args, tmp_path])
+            if not readonly:
+                self.encrypt(file_id, tmp_path, override=True, update_db=False)
+        finally:
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
 
     def read(self, file_id: str):
         """Open encrypted file in readonly mode."""
@@ -211,7 +200,7 @@ class FileEncryptionManager:
 
         is_dir = file_path and os.path.isdir(file_path)
         default_filename: str = (
-            f"onilock_{getlogin()}_vault_{naive_utcnow().strftime('%Y%m%d%H%M%s')}.oni"
+            f"onilock_{getlogin()}_vault_{naive_utcnow().strftime('%Y%m%d%H%M%S')}.oni"
         )
 
         if file_id:
@@ -230,7 +219,7 @@ class FileEncryptionManager:
             return
 
         default_output_filename = Path(
-            f"onilock_{getlogin()}_vault_{naive_utcnow().strftime('%Y%m%d%H%M%s')}.zip"
+            f"onilock_{getlogin()}_vault_{naive_utcnow().strftime('%Y%m%d%H%M%S')}.zip"
         )
         if not file_path:
             output_file = default_output_filename

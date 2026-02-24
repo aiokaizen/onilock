@@ -71,16 +71,17 @@ def generate_random_password(
     """
     characters = string.ascii_letters + string.digits
     punctuation = "@$!%*?&_}{()-=+"
-    password = [
+    required = [
         secrets.choice(string.ascii_lowercase),
         secrets.choice(string.ascii_uppercase),
         secrets.choice(string.digits),
     ]
     if include_special_characters:
-        password.append(secrets.choice(punctuation))
+        required.append(secrets.choice(punctuation))
         characters += punctuation
 
-    password += [secrets.choice(characters) for _ in range(length)]
+    remaining = max(0, length - len(required))
+    password = required + [secrets.choice(characters) for _ in range(remaining)]
 
     # Shuffle password in-place.
     random.shuffle(password)

@@ -1,6 +1,7 @@
 """Tests for onilock.filemanager (FileEncryptionManager)."""
 
 import os
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch, mock_open
@@ -607,6 +608,76 @@ class TestOpen(unittest.TestCase):
             manager.read("doc1")
 
         mock_open.assert_called_once_with("doc1", readonly=True)
+
+    def test_temp_file_deleted_after_readonly(self):
+        """Temp file must be cleaned up even in readonly mode."""
+        manager = self._make_manager()
+        profile = _make_profile(with_file=True)
+        manager._profile = profile
+        manager._engine = MagicMock()
+
+        created_tmp_path = None
+
+        real_ntf = tempfile.NamedTemporaryFile
+
+        def capturing_ntf(*args, **kwargs):
+            # Force dir to a real writable temp dir instead of /dev/shm
+            kwargs["dir"] = tempfile.gettempdir()
+            f = real_ntf(*args, **kwargs)
+            nonlocal created_tmp_path
+            created_tmp_path = f.name
+            return f
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            vault_dir = Path(tmpdir) / "vault"
+            vault_dir.mkdir()
+            encrypted_filename = vault_dir / get_output_filename("doc1")
+            encrypted_filename.write_bytes(b"encrypted")
+
+            with patch("onilock.filemanager.settings") as ms:
+                ms.VAULT_DIR = vault_dir
+                ms.PASSPHRASE = "test"
+                with patch("onilock.filemanager.tempfile.NamedTemporaryFile", side_effect=capturing_ntf):
+                    with patch("onilock.filemanager.subprocess.run"):
+                        manager.open("doc1", readonly=True)
+
+        self.assertIsNotNone(created_tmp_path)
+        self.assertFalse(os.path.exists(created_tmp_path), "Temp file was not deleted after readonly open")
+
+    def test_temp_file_deleted_on_exception(self):
+        """Temp file must be cleaned up even when an exception is raised."""
+        manager = self._make_manager()
+        profile = _make_profile(with_file=True)
+        manager._profile = profile
+        manager._engine = MagicMock()
+
+        created_tmp_path = None
+
+        real_ntf = tempfile.NamedTemporaryFile
+
+        def capturing_ntf(*args, **kwargs):
+            kwargs["dir"] = tempfile.gettempdir()
+            f = real_ntf(*args, **kwargs)
+            nonlocal created_tmp_path
+            created_tmp_path = f.name
+            return f
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            vault_dir = Path(tmpdir) / "vault"
+            vault_dir.mkdir()
+            encrypted_filename = vault_dir / get_output_filename("doc1")
+            encrypted_filename.write_bytes(b"encrypted")
+
+            with patch("onilock.filemanager.settings") as ms:
+                ms.VAULT_DIR = vault_dir
+                ms.PASSPHRASE = "test"
+                with patch("onilock.filemanager.tempfile.NamedTemporaryFile", side_effect=capturing_ntf):
+                    with patch("onilock.filemanager.subprocess.run", side_effect=RuntimeError("vim crashed")):
+                        with self.assertRaises(RuntimeError):
+                            manager.open("doc1", readonly=True)
+
+        self.assertIsNotNone(created_tmp_path)
+        self.assertFalse(os.path.exists(created_tmp_path), "Temp file was not deleted after exception")
 
 
 class TestClear(unittest.TestCase):

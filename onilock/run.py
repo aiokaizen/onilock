@@ -12,7 +12,7 @@ from onilock.account_manager import (
     initialize,
     list_accounts,
     list_files,
-    remove_account,
+    remove_account as am_remove_account,
     new_account,
 )
 
@@ -158,7 +158,6 @@ def export_vault(output: Optional[str] = None):
         output (str): The name of the zip file that will contain all files.
     """
     raise NotImplementedError()
-    filemanager.export(file_path=output)
 
 
 @app.command("list")
@@ -205,7 +204,7 @@ def remove_account(name: str):
     Args:
         name (str): The target password identifier.
     """
-    return remove_account(name)
+    return am_remove_account(name)
 
 
 @app.command()

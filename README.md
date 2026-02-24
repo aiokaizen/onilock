@@ -116,6 +116,13 @@ Contributions are welcome! Feel free to submit issues and pull requests.
 
 ## 📝 Changelog
 
+### v1.7.3
+- Fix infinite recursion in `remove-account`, wrong password length in `generate_random_password`, and temp file leak in `edit-file`/`read-file`.
+- Fix AES-CBC IV reuse and weak key derivation in `VaultKeyStore`; keys are now random and stored in a protected file.
+- Fix GPG utility crashes when a key has no UIDs or when deleting a non-existent key.
+- Fix Pydantic mutable default shared across model instances.
+- Expand test suite to 243 tests; replace observed-behavior assertions with contract-based assertions.
+
 ### v1.7.2
 - Introduce comprehensive test suite with 238 tests achieving 99%+ code coverage.
 - Migrate test runner from `unittest` to `pytest` with `pytest-cov`; enforce 95% coverage threshold on every run.
@@ -139,12 +146,6 @@ Contributions are welcome! Feel free to submit issues and pull requests.
 ### v1.5.4
 - Update `version` command
 - Ignore case for `delete` and `copy` commands
-- Detect file corruption and manipulation using checksums
-
-### v1.5.0
-- Rename shadow to vault
-- Clear clipboard after 25 seconds if it still contains the password.
-- Encrypt json files using PGP key instead of storing them as raw json file.
 - Detect file corruption and manipulation using checksums
 
 View full changelog history on `CHANGELOG.md` file.

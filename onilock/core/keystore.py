@@ -1,6 +1,6 @@
 import os
 import json
-import hashlib
+import logging
 from pathlib import Path
 from typing import Dict, Optional, Set
 import uuid
@@ -92,37 +92,45 @@ class VaultKeyStore(KeyStore):
         if not os.path.exists(keystore_basedir):
             os.makedirs(keystore_basedir)
 
-        hashcode = hashlib.sha256(__file__.encode()).hexdigest()
-        self.key = hashcode[:32].encode()
-        self.iv = get_random_bytes(self.BLOCK_SIZE)
+        self.key = self._load_or_create_key(keystore_basedir)
 
         filename = str(uuid.uuid5(uuid.NAMESPACE_DNS, keystore_id)).split("-")[-1]
         self.filename = os.path.join(keystore_basedir, f"{filename}.oni")
 
-    @property
-    def _cipher(self):
-        return AES.new(self.key, AES.MODE_CBC, self.iv)
+    def _load_or_create_key(self, keystore_basedir: str) -> bytes:
+        """Load the AES key from a protected file, or generate and store a new one."""
+        key_file = os.path.join(keystore_basedir, ".key")
+        if os.path.exists(key_file):
+            return Path(key_file).read_bytes()
+        key = get_random_bytes(32)
+        Path(key_file).write_bytes(key)
+        os.chmod(key_file, 0o600)
+        return key
+
+    def _cipher(self, iv: bytes):
+        return AES.new(self.key, AES.MODE_CBC, iv)
 
     def _read_keystore(self) -> Dict:
         try:
             encrypted_data = Path(self.filename).read_bytes()
-            self.iv = encrypted_data[self.BLOCK_SIZE : self.BLOCK_SIZE * 2]
+            iv = encrypted_data[self.BLOCK_SIZE : self.BLOCK_SIZE * 2]
             encrypted_data = (
                 encrypted_data[: self.BLOCK_SIZE]
                 + encrypted_data[self.BLOCK_SIZE * 2 :]
             )
-            json_str = unpad(self._cipher.decrypt(encrypted_data), self.BLOCK_SIZE)
+            json_str = unpad(self._cipher(iv).decrypt(encrypted_data), self.BLOCK_SIZE)
             return json.loads(json_str)
         except FileNotFoundError:
             return dict()
 
     def _write_keystore(self, data):
+        iv = get_random_bytes(self.BLOCK_SIZE)
         json_str = json.dumps(data)
         padded_data = pad(json_str.encode(), self.BLOCK_SIZE)
-        encrypted_data = self._cipher.encrypt(padded_data)
+        encrypted_data = self._cipher(iv).encrypt(padded_data)
         iv_data = (
             encrypted_data[: self.BLOCK_SIZE]
-            + self.iv
+            + iv
             + encrypted_data[self.BLOCK_SIZE :]
         )
         Path(self.filename).write_bytes(iv_data)
@@ -164,7 +172,10 @@ class KeyStoreManager:
         if default_backend == KeyStoreBackendEnum.KEYRING.value:
             try:
                 self.keystore = KeyRing(keystore_id)
-            except Exception:
+            except Exception as e:
+                logging.getLogger(__name__).warning(
+                    "System keyring unavailable (%s), falling back to VaultKeyStore.", e
+                )
                 self.keystore = VaultKeyStore(keystore_id)
         elif default_backend == KeyStoreBackendEnum.VAULT.value:
             self.keystore = VaultKeyStore(keystore_id)
