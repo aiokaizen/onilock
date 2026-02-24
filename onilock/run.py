@@ -12,16 +12,215 @@ from onilock.account_manager import (
     initialize,
     list_accounts,
     list_files,
-    remove_account,
+    remove_account as remove_stored_account,
+    rename_account,
+    search_accounts,
     new_account,
+    show_account,
+    update_account,
 )
 
 
 app = typer.Typer()
+secrets_app = typer.Typer(help="Create, view, copy, update, and delete stored secrets.")
 filemanager = FileEncryptionManager()
+app.add_typer(secrets_app, name="secrets")
 
 
-@app.command()
+def parse_secret_identifier(value: str) -> str | int:
+    value = value.strip()
+    if value.isdigit():
+        parsed = int(value)
+        if parsed <= 0:
+            return value
+        return parsed - 1
+    return value
+
+
+def render_secret(secret: dict, include_password: bool = False) -> None:
+    typer.echo(f"Name        : {secret['id']}")
+    typer.echo(f"Username    : {secret.get('username') or '-'}")
+    typer.echo(f"URL         : {secret.get('url') or '-'}")
+    typer.echo(f"Description : {secret.get('description') or '-'}")
+    if include_password:
+        typer.echo(f"Password    : {secret['password']}")
+
+
+def render_search_results(matches: list[dict]) -> None:
+    typer.echo("Idx  Name                 Username             URL")
+    typer.echo("---  -------------------  -------------------  ------------------------------")
+    for item in matches:
+        url = item.get("url") or "-"
+        username = item.get("username") or "-"
+        typer.echo(f"{item['index']:>3}  {item['id'][:19]:<19}  {username[:19]:<19}  {url[:30]}")
+
+
+@secrets_app.command("create")
+@exception_handler
+def secrets_create(
+    name: str = typer.Option(..., prompt="Secret name (e.g. Github)"),
+    password: Optional[str] = typer.Option(
+        "",
+        prompt="Password (leave empty to auto-generate)",
+        hide_input=True,
+    ),
+    username: Optional[str] = typer.Option("", prompt="Username"),
+    url: Optional[str] = typer.Option("", prompt="URL"),
+    description: Optional[str] = typer.Option("", prompt="Description"),
+):
+    """Create a new secret."""
+    generated = not bool(password)
+    cleartext_password = new_account(name, password, username, url, description)
+    typer.echo(f"Secret '{name}' stored successfully.")
+    if generated:
+        typer.echo(f"Generated password: {cleartext_password}")
+
+
+@secrets_app.command("list")
+@exception_handler
+def secrets_list():
+    """List stored secrets in a compact table."""
+    list_accounts()
+
+
+@secrets_app.command("show")
+@exception_handler
+def secrets_show(
+    identifier: str = typer.Argument(..., help="Secret name or list index (1-based)"),
+    reveal: bool = typer.Option(False, "--reveal", help="Show password in plain text."),
+    copy: bool = typer.Option(False, "--copy", help="Copy password to clipboard."),
+):
+    """Show secret metadata and optionally reveal/copy password."""
+    parsed = parse_secret_identifier(identifier)
+    secret = show_account(parsed, reveal_password=reveal)
+    render_secret(secret, include_password=reveal)
+    if copy:
+        copy_account_password(parsed)
+
+
+@secrets_app.command("copy")
+@exception_handler
+def secrets_copy(identifier: str = typer.Argument(..., help="Secret name or list index")):
+    """Copy a secret password to clipboard."""
+    parsed = parse_secret_identifier(identifier)
+    copy_account_password(parsed)
+
+
+@secrets_app.command("update")
+@exception_handler
+def secrets_update(
+    identifier: str = typer.Argument(..., help="Secret name or list index"),
+    name: Optional[str] = typer.Option(None, help="New secret name."),
+    password: Optional[str] = typer.Option(None, hide_input=True, help="New password."),
+    generate_password: bool = typer.Option(
+        False, "--generate-password", help="Auto-generate a new password."
+    ),
+    username: Optional[str] = typer.Option(None, help="New username."),
+    url: Optional[str] = typer.Option(None, help="New URL."),
+    description: Optional[str] = typer.Option(None, help="New description."),
+):
+    """Update one or more secret fields."""
+    parsed = parse_secret_identifier(identifier)
+
+    if (
+        name is None
+        and password is None
+        and not generate_password
+        and username is None
+        and url is None
+        and description is None
+    ):
+        current = show_account(parsed, reveal_password=False)
+        typer.echo("No fields provided. Interactive update mode:")
+        name_input = typer.prompt("Name", default=current["id"])
+        username_input = typer.prompt("Username", default=current.get("username") or "")
+        url_input = typer.prompt("URL", default=current.get("url") or "")
+        description_input = typer.prompt(
+            "Description", default=current.get("description") or ""
+        )
+        password_input = typer.prompt(
+            "Password (leave empty to keep current)",
+            default="",
+            hide_input=True,
+        )
+        name = name_input
+        username = username_input
+        url = url_input
+        description = description_input
+        password = password_input or None
+
+    result = update_account(
+        parsed,
+        name=name,
+        password=password,
+        generate_password=generate_password,
+        username=username,
+        url=url,
+        description=description,
+    )
+    if not result["updated_fields"]:
+        typer.echo("No changes detected.")
+        return
+
+    typer.echo(f"Updated secret '{result['id']}' fields: {', '.join(result['updated_fields'])}")
+    if result["generated_password"]:
+        typer.echo(f"Generated password: {result['generated_password']}")
+
+
+@secrets_app.command("rename")
+@exception_handler
+def secrets_rename(
+    identifier: str = typer.Argument(..., help="Secret name or list index"),
+    new_name: str = typer.Argument(..., help="New secret name"),
+):
+    """Rename a secret."""
+    parsed = parse_secret_identifier(identifier)
+    result = rename_account(parsed, new_name)
+    if not result["changed"]:
+        typer.echo("Name unchanged.")
+        return
+    typer.echo(f"Renamed secret '{result['old_id']}' -> '{result['new_id']}'.")
+
+
+@secrets_app.command("search")
+@exception_handler
+def secrets_search(
+    query: str = typer.Argument(..., help="Search query"),
+    field: str = typer.Option(
+        "all",
+        "--field",
+        "-f",
+        help="Filter field: all, name, username, url, description",
+    ),
+    limit: int = typer.Option(20, "--limit", "-n", min=1, help="Maximum results."),
+):
+    """Search secrets by name, username, URL, or description."""
+    matches = search_accounts(query, field=field, limit=limit)
+    if not matches:
+        typer.echo("No matching secrets found.")
+        return
+    render_search_results(matches)
+
+
+@secrets_app.command("delete")
+@exception_handler
+def secrets_delete(
+    identifier: str = typer.Argument(..., help="Secret name or list index"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt."),
+):
+    """Delete a secret by name or index."""
+    parsed = parse_secret_identifier(identifier)
+    secret = show_account(parsed, reveal_password=False)
+    if not yes:
+        confirmed = typer.confirm(f"Delete secret '{secret['id']}'?")
+        if not confirmed:
+            typer.echo("Aborted.")
+            return
+    removed_id = remove_stored_account(parsed)
+    typer.echo(f"Deleted secret '{removed_id}'.")
+
+
+@app.command("init")
 @exception_handler
 def initialize_vault(
     master_password: Optional[str] = None,
@@ -71,7 +270,11 @@ def new(
         url (Optional[str]): The url / service where the password is used.
         description (Optional[str]): A password description.
     """
-    return new_account(name, password, username, url, description)
+    generated = not bool(password)
+    cleartext_password = new_account(name, password, username, url, description)
+    typer.echo(f"Secret '{name}' stored successfully.")
+    if generated:
+        typer.echo(f"Generated password: {cleartext_password}")
 
 
 @app.command()
@@ -157,8 +360,8 @@ def export_vault(output: Optional[str] = None):
     Args:
         output (str): The name of the zip file that will contain all files.
     """
-    raise NotImplementedError()
-    filemanager.export(file_path=output)
+    output_path = filemanager.export_vault(file_path=output)
+    typer.echo(f"Encrypted vault exported to: {output_path}")
 
 
 @app.command("list")
@@ -188,29 +391,108 @@ def copy(name: str):
     Args:
         name (str): The target password identifier.
     """
-    account_id: str | int = name
-    try:
-        account_id = int(account_id) - 1
-    except ValueError:
-        pass
+    account_id = parse_secret_identifier(name)
     return copy_account_password(account_id)
 
 
-@app.command()
+@app.command("remove")
 @exception_handler
-def remove_account(name: str):
+def remove(
+    name: str,
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt."),
+):
     """
     Remove an account.
 
     Args:
         name (str): The target password identifier.
     """
-    return remove_account(name)
+    account_id = parse_secret_identifier(name)
+    secret = show_account(account_id, reveal_password=False)
+    if not yes:
+        confirmed = typer.confirm(f"Delete secret '{secret['id']}'?")
+        if not confirmed:
+            typer.echo("Aborted.")
+            return
+    removed_id = remove_stored_account(account_id)
+    typer.echo(f"Deleted secret '{removed_id}'.")
 
 
 @app.command()
 @exception_handler
-def generate_pwd(
+def show(
+    name: str,
+    reveal: bool = typer.Option(False, "--reveal"),
+    copy: bool = typer.Option(False, "--copy"),
+):
+    """Alias for `secrets show`."""
+    account_id = parse_secret_identifier(name)
+    secret = show_account(account_id, reveal_password=reveal)
+    render_secret(secret, include_password=reveal)
+    if copy:
+        copy_account_password(account_id)
+
+
+@app.command()
+@exception_handler
+def update(
+    name: str,
+    new_name: Optional[str] = typer.Option(None, "--name"),
+    password: Optional[str] = typer.Option(None, hide_input=True),
+    generate_password: bool = typer.Option(False, "--generate-password"),
+    username: Optional[str] = typer.Option(None),
+    url: Optional[str] = typer.Option(None),
+    description: Optional[str] = typer.Option(None),
+):
+    """Alias for `secrets update`."""
+    account_id = parse_secret_identifier(name)
+    result = update_account(
+        account_id,
+        name=new_name,
+        password=password,
+        generate_password=generate_password,
+        username=username,
+        url=url,
+        description=description,
+    )
+    if not result["updated_fields"]:
+        typer.echo("No changes detected.")
+        return
+    typer.echo(f"Updated secret '{result['id']}' fields: {', '.join(result['updated_fields'])}")
+    if result["generated_password"]:
+        typer.echo(f"Generated password: {result['generated_password']}")
+
+
+@app.command()
+@exception_handler
+def rename(name: str, new_name: str):
+    """Alias for `secrets rename`."""
+    account_id = parse_secret_identifier(name)
+    result = rename_account(account_id, new_name)
+    if not result["changed"]:
+        typer.echo("Name unchanged.")
+        return
+    typer.echo(f"Renamed secret '{result['old_id']}' -> '{result['new_id']}'.")
+
+
+@app.command()
+@exception_handler
+def search(
+    query: str,
+    field: str = typer.Option("all", "--field", "-f"),
+    limit: int = typer.Option(20, "--limit", "-n", min=1),
+):
+    """Alias for `secrets search`."""
+    matches = search_accounts(query, field=field, limit=limit)
+    if not matches:
+        typer.echo("No matching secrets found.")
+        return
+    render_search_results(matches)
+
+
+@app.command("generate")
+@exception_handler
+def generate(
     len: int = typer.Option(8, prompt="Enter password length"),
     special_chars: bool = typer.Option(True, prompt="Include special characters?"),
 ):
@@ -281,7 +563,8 @@ def export(dist: str = "."):
     Args:
         dist (Optional[str]): The destination zip file path. Defaults to current directory.
     """
-    raise NotImplementedError()
+    output_path = filemanager.export_user_data(file_path=dist)
+    typer.echo(f"User data exported to: {output_path}")
 
 
 @app.callback()

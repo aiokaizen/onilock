@@ -1,4 +1,6 @@
 import os
+import json
+import base64
 import socket
 import zipfile
 from typing import Optional
@@ -8,10 +10,15 @@ import subprocess
 import tempfile
 
 import gnupg
-import typer
+from cryptography.fernet import Fernet
 
-from onilock.account_manager import get_profile_engine
+from onilock.profile_store import get_profile_engine
 from onilock.core.constants import SECRET_FILENAME_PREFIX
+from onilock.core.exceptions import (
+    InvalidFileIdentifierError,
+    VaultConfigurationError,
+    VaultNotInitializedError,
+)
 from onilock.core.settings import settings
 from onilock.core.logging_manager import logger
 from onilock.core.utils import getlogin, naive_utcnow
@@ -47,10 +54,7 @@ class FileEncryptionManager:
 
         data = self.engine.read()
         if not data:
-            typer.echo(
-                "This database is not initialized. Please use the `init` command to initialize it."
-            )
-            exit(1)
+            raise VaultNotInitializedError()
 
         profile = Profile(**data)
         self._profile = profile
@@ -80,8 +84,13 @@ class FileEncryptionManager:
             always_trust=True,  # Avoids trust prompt
             armor=False,
         )
+        if not encrypted_data.ok:
+            raise VaultConfigurationError(
+                f"File encryption failed: {encrypted_data.status}"
+            )
         output_filepath.write_bytes(encrypted_data.data)
         logger.info("File encrypted successfully.")
+        return encrypted_data
 
     def encrypt(
         self,
@@ -95,22 +104,21 @@ class FileEncryptionManager:
         target_filepath = Path(file_to_encrypt)
 
         if not target_filepath.exists():
-            typer.echo("File does not exist.")
-            exit(1)
+            raise VaultConfigurationError("File does not exist.")
 
         if not target_filepath.is_file():
-            typer.echo(
+            raise VaultConfigurationError(
                 "Please make sure `filename` is a normal file. Directories are not supported in the current version."
             )
-            exit(1)
 
         output_filename = get_output_filename(file_id)
         output_filepath = settings.VAULT_DIR / output_filename
         logger.debug(f"Encryption filename {output_filename}")
 
         if output_filepath.exists() and not override:
-            typer.echo("ID already exists. Please choose another id for your file.")
-            exit(1)
+            raise InvalidFileIdentifierError(
+                "ID already exists. Please choose another id for your file."
+            )
 
         with target_filepath.open("rb") as f:
             encrypted_data = self.encrypt_bytes(f.read(), output_filepath)
@@ -139,12 +147,20 @@ class FileEncryptionManager:
             passphrase=settings.PASSPHRASE,
         )
         if not decrypted_data.ok:
-            raise Exception(decrypted_data.status)
+            raise VaultConfigurationError(
+                f"File decryption failed: {decrypted_data.status}"
+            )
         return decrypted_data.data
 
     def decrypt(self, file_id: str):
+        if not self.profile.get_file(file_id):
+            raise InvalidFileIdentifierError()
+
         encrypted_filename = get_output_filename(file_id)
         encrypted_filepath = settings.VAULT_DIR / encrypted_filename
+
+        if not encrypted_filepath.exists():
+            raise InvalidFileIdentifierError("Encrypted file not found in vault.")
 
         with encrypted_filepath.open("rb") as f:
             data = self.decrypt_bytes(f.read())
@@ -152,38 +168,40 @@ class FileEncryptionManager:
 
     def open(self, file_id: str, readonly=False):
         if not self.profile.get_file(file_id):
-            typer.echo("Invalid file id.")
-            exit(1)
+            raise InvalidFileIdentifierError()
 
         decrypted_data = self.decrypt(file_id)
+        tmp_filepath: Optional[str] = None
+        try:
+            with tempfile.NamedTemporaryFile(mode="rb+", delete=False) as tmp:
+                tmp_filepath = tmp.name
+                tmp.write(decrypted_data)
+                tmp.flush()  # Ensure content is written
 
-        with tempfile.NamedTemporaryFile(
-            mode="rb+", delete=False, dir="/dev/shm"
-        ) as tmp:
-            tmp.write(decrypted_data)
-            tmp.flush()  # Ensure content is written
+                readonly_args = []
+                if readonly:
+                    readonly_args = [
+                        "-R",  # Read only
+                        "-m",  # Forbid writes
+                    ]
 
-            readonly_args = []
-            if readonly:
-                readonly_args = [
-                    "-R",  # Read only
-                    "-m",  # Forbid writes
-                ]
+                subprocess.run(
+                    [
+                        "vim",  # Start vim with the decrypted file as input.
+                        "-n",  # No swap file
+                        *readonly_args,
+                        tmp.name,
+                    ],
+                )
 
-            subprocess.run(
-                [
-                    "vim",  # Start vim with the decrypted file as input.
-                    "-n",  # No swap file
-                    *readonly_args,
-                    tmp.name,
-                ],
-            )
+                if readonly:
+                    return
 
-            if readonly:
-                return
-
-            # else: write the new data back to the vault.
-            self.encrypt(file_id, tmp.name, override=True, update_db=False)
+                # else: write the new data back to the vault.
+                self.encrypt(file_id, tmp.name, override=True, update_db=False)
+        finally:
+            if tmp_filepath:
+                Path(tmp_filepath).unlink(missing_ok=True)
 
     def read(self, file_id: str):
         """Open encrypted file in readonly mode."""
@@ -206,8 +224,7 @@ class FileEncryptionManager:
         """
 
         if file_id and not self.profile.get_file(file_id):
-            typer.echo("Invalid file id.")
-            exit(1)
+            raise InvalidFileIdentifierError()
 
         is_dir = file_path and os.path.isdir(file_path)
         default_filename: str = (
@@ -250,6 +267,85 @@ class FileEncryptionManager:
                 with zipf.open(filename, "w") as f:
                     f.write(bin_data)
 
+    def _resolve_output_path(
+        self, file_path: Optional[str], default_filename: Path
+    ) -> Path:
+        if not file_path:
+            return default_filename
+        if os.path.isdir(file_path):
+            return Path(file_path) / default_filename
+        return Path(file_path)
+
+    def _decrypt_account_password(self, encrypted_password: str) -> str:
+        cipher = Fernet(settings.SECRET_KEY.encode())
+        encrypted = base64.b64decode(encrypted_password)
+        return cipher.decrypt(encrypted).decode()
+
+    def export_vault(self, file_path: Optional[str] = None) -> Path:
+        """
+        Export the raw encrypted vault artifacts as a zip archive.
+        """
+        default_output_filename = Path(
+            f"onilock_{getlogin()}_vault_backup_{naive_utcnow().strftime('%Y%m%d%H%M%s')}.zip"
+        )
+        output_file = self._resolve_output_path(file_path, default_output_filename)
+
+        profile_file = Path(getattr(self.engine, "filepath", ""))
+        with zipfile.ZipFile(output_file, "w", zipfile.ZIP_DEFLATED) as zipf:
+            setup_file = Path(settings.SETUP_FILEPATH)
+            if setup_file.exists():
+                zipf.write(setup_file, arcname=f"vault/setup/{setup_file.name}")
+
+            if profile_file.exists():
+                zipf.write(profile_file, arcname=f"vault/profile/{profile_file.name}")
+
+            for file in self.profile.files:
+                file_path_obj = Path(file.location)
+                if file_path_obj.exists():
+                    zipf.write(file_path_obj, arcname=f"vault/files/{file_path_obj.name}")
+        return output_file
+
+    def export_user_data(self, file_path: Optional[str] = None) -> Path:
+        """
+        Export decrypted accounts metadata and decrypted files into a zip archive.
+        """
+        default_output_filename = Path(
+            f"onilock_{getlogin()}_user_export_{naive_utcnow().strftime('%Y%m%d%H%M%s')}.zip"
+        )
+        output_file = self._resolve_output_path(file_path, default_output_filename)
+
+        export_data = {
+            "profile": self.profile.name,
+            "exported_at": naive_utcnow().isoformat(),
+            "accounts": [],
+        }
+
+        for account in self.profile.accounts:
+            account_data = account.model_dump()
+            account_data["password"] = self._decrypt_account_password(
+                account_data["encrypted_password"]
+            )
+            account_data.pop("encrypted_password", None)
+            export_data["accounts"].append(account_data)
+
+        with zipfile.ZipFile(output_file, "w", zipfile.ZIP_DEFLATED) as zipf:
+            zipf.writestr(
+                "onilock_export/accounts.json",
+                json.dumps(export_data, indent=2),
+            )
+
+            for file in self.profile.files:
+                filename = f"onilock_export/files/{Path(file.src).name}"
+                bin_data = self.decrypt(file.id)
+                with zipf.open(filename, "w") as f:
+                    f.write(bin_data)
+        return output_file
+
     def clear(self):
         """Delete all encrypted files in the vault."""
-        pass
+        for file in list(self.profile.files):
+            target = Path(file.location)
+            if target.exists():
+                target.unlink()
+        self.profile.files.clear()
+        self.engine.write(self.profile.model_dump())
