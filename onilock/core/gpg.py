@@ -34,7 +34,9 @@ def pgp_key_exists(
 
     if real_name:
         return any(
-            real_name == uid.split(" ")[0] for key in keys for uid in key.get("uids")
+            real_name == uid.split(" ")[0]
+            for key in keys
+            for uid in key.get("uids", [])
         )
 
     return False
@@ -70,8 +72,12 @@ def delete_pgp_key(
     key_id: Optional[str] = None,
 ):
     """Delete PGP public and private key."""
+    from onilock.core.exceptions.exceptions import EncryptionKeyNotFoundError
+
     gpg = gnupg.GPG(gnupghome=gpg_home)
     key_info = get_pgp_key_info(gpg_home, real_name, key_id)
+    if key_info is None:
+        raise EncryptionKeyNotFoundError()
     fingerprint = key_info["fingerprint"]
 
     # Delete the secret key first
