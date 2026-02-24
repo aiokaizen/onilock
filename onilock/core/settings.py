@@ -21,8 +21,35 @@ class Settings:
             str_to_bool,
         )
 
+        def find_project_root() -> Optional[Path]:
+            path = Path(__file__).resolve()
+            if "site-packages" in path.parts or "dist-packages" in path.parts:
+                return None
+            for parent in path.parents:
+                if (parent / "pyproject.toml").exists():
+                    return parent
+            return None
+
+        project_root = find_project_root()
+        is_dev_source = project_root is not None
+        self.IS_DEV_SOURCE = is_dev_source
+
         # OniLock vault directory
-        self.VAULT_DIR = Path.home() / ".onilock" / "vault"
+        default_vault_dir = (
+            project_root / ".onilock_dev" / "vault"
+            if is_dev_source
+            else Path.home() / ".onilock" / "vault"
+        )
+        env_vault_dir = os.environ.get("ONI_VAULT_DIR")
+        self.VAULT_DIR = Path(env_vault_dir or str(default_vault_dir))
+        try:
+            self.VAULT_DIR.mkdir(parents=True, exist_ok=True)
+        except PermissionError:
+            if is_dev_source:
+                self.VAULT_DIR = Path(project_root / ".onilock_dev" / "vault")
+                self.VAULT_DIR.mkdir(parents=True, exist_ok=True)
+            else:
+                raise
 
         self.DEBUG = False
         try:
@@ -34,15 +61,34 @@ class Settings:
         self.SECRET_KEY = os.environ.get("ONI_SECRET_KEY", get_secret_key())
         self.DB_BACKEND = DBBackEndEnum(os.environ.get("ONI_DB_BACKEND", "Json"))
         self.DB_URL = os.environ.get("ONI_DB_URL")
-        self.DB_NAME = os.environ.get("ONI_DB_NAME", getlogin())
+        default_db_name = f"{getlogin()}_dev" if is_dev_source else getlogin()
+        self.DB_NAME = os.environ.get("ONI_DB_NAME", default_db_name)
         self.DB_HOST = os.environ.get("ONI_DB_HOST")
         self.DB_USER = os.environ.get("ONI_DB_USER")
         self.DB_PWD = os.environ.get("ONI_DB_PWD")
 
         self.PASSPHRASE: str = os.environ.get("ONI_GPG_PASSPHRASE", get_passphrase())
-        self.GPG_HOME: Optional[str] = os.environ.get("ONI_GPG_HOME", None)
+        default_gpg_home = (
+            str(project_root / ".onilock_dev" / ".gnupg")
+            if is_dev_source
+            else None
+        )
+        env_gpg_home = os.environ.get("ONI_GPG_HOME")
+        if env_gpg_home and is_dev_source:
+            try:
+                os.makedirs(env_gpg_home, exist_ok=True)
+                os.chmod(env_gpg_home, 0o700)
+                if not os.access(env_gpg_home, os.W_OK):
+                    env_gpg_home = None
+            except PermissionError:
+                env_gpg_home = None
+
+        self.GPG_HOME: Optional[str] = env_gpg_home or default_gpg_home
+        default_pgp_name = (
+            f"{self.DB_NAME}_pgp" if is_dev_source else f"{getlogin()}_onilock_pgp"
+        )
         self.PGP_REAL_NAME: str = os.environ.get(
-            "ONI_PGP_REAL_NAME", f"{getlogin()}_onilock_pgp"
+            "ONI_PGP_REAL_NAME", default_pgp_name
         )
         self.PGP_EMAIL: str = "pgp@onilock.com"
         self.CHECKSUM_SEPARATOR = "(:|?"
@@ -53,7 +99,9 @@ class Settings:
         except ValueError:
             pass
 
-        filename = str(uuid.uuid5(uuid.NAMESPACE_DNS, getlogin() + "_oni")).split("-")[
+        filename = str(
+            uuid.uuid5(uuid.NAMESPACE_DNS, self.DB_NAME + "_oni")
+        ).split("-")[
             -1
         ]
         self.SETUP_FILEPATH = os.path.join(

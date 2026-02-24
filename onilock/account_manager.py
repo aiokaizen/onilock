@@ -10,12 +10,14 @@ import base64
 from cryptography.fernet import Fernet
 import pyperclip
 import bcrypt
-import typer
+
+from rich.table import Table
 
 from onilock.core.decorators import pre_post_hooks
 from onilock.core.keystore import keystore
 from onilock.core.settings import settings
 from onilock.core.logging_manager import logger
+from onilock.core.ui import console, success, error, warning, info
 from onilock.core.gpg import (
     delete_pgp_key,
 )
@@ -41,8 +43,6 @@ __all__ = [
 
 def pre_command():
     logger.debug("Starting pre-command hook.")
-    # migrate_vault(profile.vault_version, Profile.vault_version)
-    # version = get_version()
 
 
 def post_command():
@@ -54,20 +54,41 @@ def verify_master_password(master_password: str):
     Verify that the provided master password is valid.
 
     Args:
-        id (str): The target password identifier.
         master_password (str): The master password.
     """
     engine = get_profile_engine()
+    if not engine:
+        error(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+        )
+        exit(1)
     data = engine.read()
     if not data:
-        typer.echo(
-            "This database is not initialized. Please use the `init` command to initialize it."
+        error(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
         )
         exit(1)
 
     profile = Profile(**data)
     hashed_master_password = base64.b64decode(profile.master_password)
     return bcrypt.checkpw(master_password.encode(), hashed_master_password)
+
+
+def _load_setup_data(setup_engine):
+    try:
+        return setup_engine.read()
+    except RuntimeError as exc:
+        message = str(exc)
+        if "no secret key" in message:
+            error(
+                "Unable to decrypt the setup data. The required GPG secret key is missing."
+            )
+            info(
+                "If this is a local dev environment, set [bold]ONI_DB_NAME[/bold] and "
+                "[bold]ONI_GPG_HOME[/bold], then run [bold]onilock initialize-vault[/bold]."
+            )
+            return None
+        raise
 
 
 def get_profile_engine():
@@ -78,7 +99,9 @@ def get_profile_engine():
         database_url=settings.SETUP_FILEPATH, is_encrypted=True
     )
     setup_engine = db_manager.get_engine()
-    setup_data = setup_engine.read()
+    setup_data = _load_setup_data(setup_engine)
+    if not setup_data or settings.DB_NAME not in setup_data:
+        return None
     b64encrypted_config_filepath = setup_data[settings.DB_NAME]["filepath"]
     encrypted_filepath = base64.b64decode(b64encrypted_config_filepath)
     config_filepath = cipher.decrypt(encrypted_filepath).decode()
@@ -88,10 +111,7 @@ def get_profile_engine():
 @pre_post_hooks(pre_command, post_command)
 def initialize(master_password: Optional[str] = None):
     """
-    Initialize the password manager whith a master password.
-
-    Note:
-        The master password should be very secure and be saved in a safe place.
+    Initialize the password manager with a master password.
 
     Args:
         master_password (Optional[str]): The master password used to secure all the other accounts.
@@ -101,7 +121,7 @@ def initialize(master_password: Optional[str] = None):
     name = settings.DB_NAME
 
     filename = generate_random_password(12, include_special_characters=False) + ".oni"
-    filepath = os.path.join(Path.home(), ".onilock", "vault", filename)
+    filepath = str(settings.VAULT_DIR / filename)
 
     db_manager = DatabaseManager(database_url=filepath, is_encrypted=True)
     engine = db_manager.get_engine()
@@ -112,7 +132,7 @@ def initialize(master_password: Optional[str] = None):
     setup_data = setup_engine.read()
 
     if data or name in setup_data:
-        typer.echo("This database is already initialized")
+        error("This vault is already initialized.")
         exit(1)
 
     if not master_password:
@@ -122,12 +142,12 @@ def initialize(master_password: Optional[str] = None):
         master_password = generate_random_password(
             length=25, include_special_characters=True
         )
-        typer.echo(
-            f"\nGenerated password: {master_password}\n"
-            "This is the only time this password is visible. Make sure you copy it to a safe place before proceding.\n"
+        warning(
+            f"Generated master password: [bold]{master_password}[/bold]\n"
+            "  This is the [bold]only time[/bold] this password will be shown. "
+            "Store it somewhere safe before continuing."
         )
     else:
-        # @TODO: Verify master password strength.
         pass
 
     hashed_master_password = bcrypt.hashpw(master_password.encode(), bcrypt.gensalt())
@@ -143,7 +163,6 @@ def initialize(master_password: Optional[str] = None):
 
     logger.info("Updating the current setup file.")
 
-    # Encrypting filepath
     cipher = Fernet(settings.SECRET_KEY.encode())
     logger.debug("Encrypting filepath.")
     encrypted_filepath = cipher.encrypt(filepath.encode())
@@ -156,6 +175,7 @@ def initialize(master_password: Optional[str] = None):
     setup_engine.write(setup_data)
 
     logger.info("Initialization completed successfully.")
+    success("Vault initialized successfully.")
     return master_password
 
 
@@ -178,10 +198,15 @@ def new_account(
         description (Optional[str]): A password description.
     """
     engine = get_profile_engine()
+    if not engine:
+        error(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+        )
+        exit(1)
     data = engine.read()
     if not data:
-        typer.echo(
-            "This database is not initialized. Please use the `init` command to initialize it."
+        error(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
         )
         exit(1)
 
@@ -190,8 +215,6 @@ def new_account(
     if not password:
         logger.warning("Password not provided, generating it randomly.")
         password = generate_random_password()
-
-    # @TODO: Verify password strength.
 
     cipher = Fernet(settings.SECRET_KEY.encode())
     logger.debug("Encrypting the password.")
@@ -210,6 +233,7 @@ def new_account(
     profile.accounts.append(password_model)
     engine.write(profile.model_dump())
     logger.info("Password saved successfully.")
+    success(f"Account [bold]{name}[/bold] added to the vault.")
     return password
 
 
@@ -218,24 +242,44 @@ def list_accounts():
     """List all available accounts."""
 
     engine = get_profile_engine()
+    if not engine:
+        info(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+        )
+        return
     data = engine.read()
+    if not data:
+        info(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+        )
+        return
     profile = Profile(**data)
 
-    typer.echo(f"Accounts list for {profile.name}")
+    if not profile.accounts:
+        info(
+            f"No accounts found in [bold]{profile.name}[/bold]. "
+            "Use [bold]onilock new[/bold] to add one."
+        )
+        return
+
+    table = Table(title=f"Accounts — {profile.name}", show_lines=True)
+    table.add_column("#", style="dim", width=4, justify="right")
+    table.add_column("Name", style="bold cyan")
+    table.add_column("Username", style="green")
+    table.add_column("URL", style="blue")
+    table.add_column("Created", style="dim")
 
     for index, account in enumerate(profile.accounts):
-        created_date = datetime.fromtimestamp(account.created_at)
-        typer.echo(
-            f"""
-=================== [{index + 1}] {account.id} ===================
-
-          username: {account.username}
-          password: {account.encrypted_password[:15]}***{account.encrypted_password[-15:]}
-               url: {account.url}
-       description: {account.description}
-     creation date: {created_date.strftime("%Y-%m-%d %H:%M:%S")}
-            """
+        created_date = datetime.fromtimestamp(account.created_at).strftime("%Y-%m-%d")
+        table.add_row(
+            str(index + 1),
+            account.id,
+            account.username or "—",
+            account.url or "—",
+            created_date,
         )
+
+    console.print(table)
 
 
 @pre_post_hooks(pre_command, post_command)
@@ -243,24 +287,44 @@ def list_files():
     """List all available files."""
 
     engine = get_profile_engine()
+    if not engine:
+        info(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+        )
+        return
     data = engine.read()
+    if not data:
+        info(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+        )
+        return
     profile = Profile(**data)
 
-    typer.echo(f"Files list for {profile.name}")
+    if not profile.files:
+        info(
+            f"No files found in [bold]{profile.name}[/bold]. "
+            "Use [bold]onilock encrypt-file[/bold] to add one."
+        )
+        return
+
+    table = Table(title=f"Encrypted Files — {profile.name}", show_lines=True)
+    table.add_column("ID", style="bold cyan")
+    table.add_column("Source File", style="green")
+    table.add_column("Owner", style="dim")
+    table.add_column("Host", style="dim")
+    table.add_column("Created", style="dim")
 
     for file in profile.files:
-        created_date = datetime.fromtimestamp(file.created_at)
-        typer.echo(
-            f"""
-=================== {file.id} ===================
-
-       source file: {Path(file.src).name}
-              UUID: {Path(file.location).stem}
-             owner: {file.user}
-              host: {file.host}
-     creation date: {created_date.strftime("%Y-%m-%d %H:%M:%S")}
-            """
+        created_date = datetime.fromtimestamp(file.created_at).strftime("%Y-%m-%d")
+        table.add_row(
+            file.id,
+            Path(file.src).name,
+            file.user,
+            file.host,
+            created_date,
         )
+
+    console.print(table)
 
 
 @pre_post_hooks(pre_command, post_command)
@@ -269,13 +333,18 @@ def copy_account_password(id: str | int):
     Copy the password of the account with the provided ID to the clipboard.
 
     Args:
-        id (str): The target password identifier.
+        id (str | int): The target password identifier or 0-based index.
     """
     engine = get_profile_engine()
+    if not engine:
+        error(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+        )
+        exit(1)
     data = engine.read()
     if not data:
-        typer.echo(
-            "This database is not initialized. Please use the `init` command to initialize it."
+        error(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
         )
         exit(1)
 
@@ -283,7 +352,10 @@ def copy_account_password(id: str | int):
 
     account = profile.get_account(id)
     if not account:
-        typer.echo("Invalid account name or index", err=True, color=True)
+        error(
+            f"Account [bold]{id}[/bold] not found. "
+            "Run [bold]onilock list[/bold] to see available accounts."
+        )
         exit(1)
 
     logger.debug(f"Raw password: {account.encrypted_password}")
@@ -293,9 +365,12 @@ def copy_account_password(id: str | int):
     decrypted_password = cipher.decrypt(encrypted_password).decode()
     pyperclip.copy(decrypted_password)
     logger.info(f"Password {account.id} copied to clipboard successfully.")
-    typer.echo("Password copied to clipboard successfully.")
+    success(
+        f"Password for [bold]{account.id}[/bold] copied to clipboard. "
+        "Clears automatically in [bold]10s[/bold]."
+    )
 
-    logger.debug("Password will be cleared in 25 seconds.")
+    logger.debug("Password will be cleared in 10 seconds.")
 
     process = multiprocessing.Process(
         target=clear_clipboard_after_delay,
@@ -303,7 +378,6 @@ def copy_account_password(id: str | int):
     )
     process.start()
 
-    # Immediately exit the main process to allow it to terminate while the child process runs
     os._exit(0)
 
 
@@ -316,10 +390,15 @@ def remove_account(name: str):
         name (str): The target account name.
     """
     engine = get_profile_engine()
+    if not engine:
+        error(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+        )
+        exit(1)
     data = engine.read()
     if not data:
-        typer.echo(
-            "This database is not initialized. Please use the `init` command to initialize it."
+        error(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
         )
         exit(1)
 
@@ -328,11 +407,15 @@ def remove_account(name: str):
     account = profile.get_account(name)
 
     if not account:
-        typer.echo("Invalid account name", err=True, color=True)
+        error(
+            f"Account [bold]{name}[/bold] not found. "
+            "Run [bold]onilock list[/bold] to see available accounts."
+        )
         exit(1)
 
     profile.remove_account(name)
     engine.write(profile.model_dump())
+    success(f"Account [bold]{name}[/bold] removed.")
 
 
 @pre_post_hooks(pre_command, post_command)
@@ -345,16 +428,13 @@ def delete_profile(master_password: str):
     """
     master_password_match = verify_master_password(master_password)
     if not master_password_match:
-        typer.echo("Invalid master password!")
+        error("Invalid master password.")
         exit(1)
 
-    # Get passphrase before deleting the keyring
     passphrase = get_passphrase()
 
-    # Delete keyrings
     keystore.clear()
 
-    # Delete PGP key
     delete_pgp_key(
         passphrase=passphrase,
         gpg_home=settings.GPG_HOME,
@@ -362,3 +442,4 @@ def delete_profile(master_password: str):
     )
 
     shutil.rmtree(settings.VAULT_DIR)
+    success("All user data has been permanently deleted.")

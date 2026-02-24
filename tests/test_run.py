@@ -162,7 +162,7 @@ class TestDeleteFileCommand(unittest.TestCase):
         from onilock.run import app, filemanager
 
         with patch.object(filemanager, "delete") as mock_delete:
-            result = runner.invoke(app, ["delete-file", "doc1"])
+            result = runner.invoke(app, ["delete-file", "doc1"], input="y\n")
         mock_delete.assert_called_once_with("doc1")
 
 
@@ -218,7 +218,7 @@ class TestRemoveAccountCommand(unittest.TestCase):
         # Patch am_remove_account (the aliased import in run.py) so we verify
         # the CLI delegates to the actual business-logic function, not itself.
         with patch("onilock.run.am_remove_account") as mock_remove:
-            result = runner.invoke(app, ["remove-account", "github"])
+            result = runner.invoke(app, ["remove-account", "github"], input="y\n")
         mock_remove.assert_called_once_with("github")
         self.assertEqual(result.exit_code, 0)
 
@@ -231,6 +231,7 @@ class TestEraseUserDataCommand(unittest.TestCase):
             result = runner.invoke(
                 app,
                 ["erase-user-data", "--master-password=strongpassword"],
+                input="y\n",
             )
         mock_delete.assert_called_once_with("strongpassword")
 
