@@ -153,6 +153,7 @@ Adds an optional 4-digit PIN gate for sensitive commands. Leave PIN empty in `pi
 onilock list --json
 onilock list-files --json
 onilock doctor --json
+onilock doctor --verbose
 ```
 Use `--json` for scripting and machine-readable output.
 

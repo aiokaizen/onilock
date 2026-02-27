@@ -33,6 +33,7 @@ from onilock.account_manager import (
     get_files_payload,
     get_password_health_report,
     import_secrets,
+    is_profile_unlocked,
     list_account_tags,
     get_profile_engine,
     get_account_secret,
@@ -1354,12 +1355,55 @@ def generate_pwd(
 
 def _collect_doctor_payload(verbose: bool = False) -> dict:
     checks = []
+    active_profile = get_active_profile() or settings.DB_NAME
+    setup_path = Path(settings.SETUP_FILEPATH)
+    backup_dir = Path(settings.BACKUP_DIR)
+    audit_parent = Path(settings.AUDIT_LOG).parent
+
+    profile_data = {}
+    pin_enabled = False
+    profile_engine = get_profile_engine()
+    if profile_engine:
+        try:
+            profile_data = profile_engine.read() or {}
+        except Exception:
+            profile_data = {}
+    if isinstance(profile_data, dict):
+        pin_enabled = bool(profile_data.get("pin_enabled", False))
 
     checks.append(
         {
             "name": "vault_dir_writable",
             "ok": os.access(settings.VAULT_DIR, os.W_OK),
             "detail": str(settings.VAULT_DIR) if verbose else "",
+        }
+    )
+    checks.append(
+        {
+            "name": "backup_dir_writable",
+            "ok": os.access(backup_dir, os.W_OK),
+            "detail": str(backup_dir) if verbose else "",
+        }
+    )
+    checks.append(
+        {
+            "name": "audit_dir_writable",
+            "ok": os.access(audit_parent, os.W_OK),
+            "detail": str(audit_parent) if verbose else "",
+        }
+    )
+    checks.append(
+        {
+            "name": "setup_file_exists",
+            "ok": setup_path.exists(),
+            "detail": str(setup_path) if verbose else "",
+        }
+    )
+    checks.append(
+        {
+            "name": "profile_data_readable",
+            "ok": bool(profile_data and isinstance(profile_data, dict)),
+            "detail": "profile payload loaded" if verbose and profile_data else "",
         }
     )
 
@@ -1450,8 +1494,45 @@ def _collect_doctor_payload(verbose: bool = False) -> dict:
                 "detail": str(exc) if verbose else "",
             }
         )
+    keystore_backend = "unknown"
+    try:
+        manager = KeyStoreManager(settings.DB_NAME)
+        persisted = manager._get_persisted_backend(settings.DB_NAME)
+        keystore_backend = persisted or manager.keystore.__class__.__name__.lower()
+        checks.append(
+            {
+                "name": "keystore_backend_resolved",
+                "ok": True,
+                "detail": keystore_backend if verbose else "",
+            }
+        )
+    except Exception as exc:
+        checks.append(
+            {
+                "name": "keystore_backend_resolved",
+                "ok": False,
+                "detail": str(exc) if verbose else "",
+            }
+        )
 
-    return {"ok": all(item["ok"] for item in checks), "checks": checks}
+    unlock_required = pin_enabled
+    unlocked = is_profile_unlocked(active_profile) if unlock_required else True
+
+    return {
+        "ok": all(item["ok"] for item in checks),
+        "profile": {
+            "active": active_profile,
+            "pin_enabled": pin_enabled,
+        },
+        "unlock": {
+            "required": unlock_required,
+            "unlocked": unlocked,
+        },
+        "keystore": {
+            "backend": keystore_backend,
+        },
+        "checks": checks,
+    }
 
 
 @app.command(rich_help_panel="Utilities")
@@ -1470,6 +1551,12 @@ def doctor(
         typer.echo(json.dumps(payload))
         return
 
+    console.print(
+        f"[bold]Profile:[/bold] {payload['profile']['active']}  "
+        f"[bold]PIN enabled:[/bold] {payload['profile']['pin_enabled']}  "
+        f"[bold]Unlocked:[/bold] {payload['unlock']['unlocked']}  "
+        f"[bold]Keystore:[/bold] {payload['keystore']['backend']}"
+    )
     for item in payload["checks"]:
         status = "[bold green]OK[/bold green]" if item["ok"] else "[bold red]FAIL[/bold red]"
         line = f"{status} {item['name']}"

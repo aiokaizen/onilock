@@ -453,6 +453,55 @@ class TestImportSecretsCommand(unittest.TestCase):
         )
 
 
+class TestDoctorEnhanced(unittest.TestCase):
+    def test_collect_doctor_payload_contains_profile_and_unlock(self):
+        from onilock.run import _collect_doctor_payload
+
+        profile_data = {
+            "name": "work",
+            "master_password": "x",
+            "accounts": [],
+            "files": [],
+            "pin_enabled": True,
+            "pin_hash": "abc",
+        }
+        engine = MagicMock()
+        engine.read.return_value = profile_data
+
+        with patch("onilock.run.get_active_profile", return_value="work"):
+            with patch("onilock.run.get_profile_engine", return_value=engine):
+                with patch("onilock.run.is_profile_unlocked", return_value=False):
+                    with patch("onilock.run.os.access", return_value=True):
+                        with patch("subprocess.run"):
+                            with patch("keyring.get_password", return_value=None):
+                                with patch("onilock.core.utils.clipboard_available", return_value=True):
+                                    with patch("onilock.run.KeyStoreManager") as mock_ks:
+                                        inst = MagicMock()
+                                        inst._get_persisted_backend.return_value = "vault"
+                                        mock_ks.return_value = inst
+                                        payload = _collect_doctor_payload(verbose=True)
+
+        self.assertEqual(payload["profile"]["active"], "work")
+        self.assertTrue(payload["unlock"]["required"])
+        self.assertIn("checks", payload)
+
+    def test_doctor_verbose_human_output(self):
+        from onilock.run import app
+
+        payload = {
+            "ok": False,
+            "profile": {"active": "work", "pin_enabled": True},
+            "unlock": {"required": True, "unlocked": False},
+            "keystore": {"backend": "vault"},
+            "checks": [{"name": "vault_dir_writable", "ok": False, "detail": "/tmp"}],
+        }
+        with patch("onilock.run._collect_doctor_payload", return_value=payload):
+            result = runner.invoke(app, ["doctor", "--verbose"])
+        self.assertEqual(result.exit_code, 0)
+        self.assertIn("vault_dir_writable", result.output)
+        self.assertIn("/tmp", result.output)
+
+
 class TestProfilesCommand(unittest.TestCase):
     def test_profiles_remove_force(self):
         from onilock.run import app
