@@ -337,8 +337,17 @@ class TestExportVaultCommand(unittest.TestCase):
             "accounts": [],
             "files": [],
         }
+        artifacts_dir = Path(".onilock_artifacts")
+        output_path = artifacts_dir / "export-vault-test.zip"
         with patch("onilock.run.get_profile_engine", return_value=mock_engine):
-            result = runner.invoke(app, ["export-vault", "--no-passwords"])
+            result = runner.invoke(
+                app,
+                [
+                    "export-vault",
+                    "--no-passwords",
+                    f"--output={output_path}",
+                ],
+            )
         self.assertEqual(result.exit_code, 0)
         self.assertIn("exported vault", result.output.lower())
 
@@ -356,8 +365,17 @@ class TestExportCommand(unittest.TestCase):
             "accounts": [],
             "files": [],
         }
+        artifacts_dir = Path(".onilock_artifacts")
+        output_path = artifacts_dir / "export-test.zip"
         with patch("onilock.run.get_profile_engine", return_value=mock_engine):
-            result = runner.invoke(app, ["export", "--no-passwords"])
+            result = runner.invoke(
+                app,
+                [
+                    "export",
+                    "--no-passwords",
+                    f"--dist={output_path}",
+                ],
+            )
         self.assertEqual(result.exit_code, 0)
         self.assertIn("exported vault", result.output.lower())
 
