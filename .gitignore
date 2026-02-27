@@ -7,3 +7,4 @@ dist
 htmlcov
 .venv
 .onilock_dev
+.onilock_artifacts/

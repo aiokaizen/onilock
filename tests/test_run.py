@@ -3,8 +3,12 @@
 import os
 import unittest
 from unittest.mock import MagicMock, patch
+from pathlib import Path
+import tempfile
+import base64
 
 from typer.testing import CliRunner
+from cryptography.fernet import Fernet
 
 
 def _get_app():
@@ -58,6 +62,8 @@ class TestInitializeVaultCommand(unittest.TestCase):
                 app, ["initialize-vault", "--master-password=strongpassword"]
             )
         mock_init.assert_called_once_with("strongpassword")
+        self.assertIn("Initialization Targets", result.output)
+        self.assertIn("Vault directory", result.output)
 
     def test_initialize_vault_prompts_when_no_password(self):
         from onilock.run import app
@@ -131,12 +137,136 @@ class TestCopyCommand(unittest.TestCase):
         mock_copy.assert_called_once_with("mygithub")
 
 
+class TestProfilesCommand(unittest.TestCase):
+    def test_profiles_remove_force(self):
+        from onilock.run import app
+
+        with patch("onilock.run.list_profiles", side_effect=[["work", "personal"], ["personal"]]):
+            with patch("onilock.run._cleanup_profile_artifacts", return_value={
+                "setup_file": 1,
+                "vault_file": 1,
+                "encrypted_files": 2,
+                "backups": 1,
+                "keystore_backend": 1,
+            }) as mock_cleanup:
+                with patch("onilock.run.get_active_profile", return_value="work"):
+                    with patch("onilock.run.remove_profile") as mock_remove:
+                        with patch("onilock.run.set_active_profile") as mock_set_active:
+                            with patch("onilock.run.audit") as mock_audit:
+                                result = runner.invoke(
+                                    app, ["profiles", "remove", "work", "--force"]
+                                )
+
+        self.assertEqual(result.exit_code, 0)
+        self.assertIn("irreversible", result.output.lower())
+        mock_cleanup.assert_called_once_with("work")
+        mock_remove.assert_called_once_with("work")
+        mock_set_active.assert_called_once_with("personal")
+        mock_audit.assert_called_once()
+
+    def test_profiles_remove_missing_profile_exits(self):
+        from onilock.run import app
+
+        with patch("onilock.run.list_profiles", return_value=["work"]):
+            result = runner.invoke(app, ["profiles", "remove", "missing", "--force"])
+
+        self.assertNotEqual(result.exit_code, 0)
+        self.assertIn("was not found", result.output.lower())
+
+    def test_profiles_remove_non_force_confirms(self):
+        from onilock.run import app
+
+        with patch("onilock.run.list_profiles", side_effect=[["work"], []]):
+            with patch(
+                "onilock.run._cleanup_profile_artifacts",
+                return_value={
+                    "setup_file": 0,
+                    "vault_file": 0,
+                    "encrypted_files": 0,
+                    "backups": 0,
+                    "keystore_backend": 0,
+                },
+            ):
+                with patch("onilock.run.get_active_profile", return_value=None):
+                    with patch("onilock.run.remove_profile"):
+                        with patch("onilock.run.audit"):
+                            result = runner.invoke(
+                                app, ["profiles", "remove", "work"], input="y\n"
+                            )
+
+        self.assertEqual(result.exit_code, 0)
+        self.assertIn("irreversible", result.output.lower())
+
+    def test_cleanup_profile_artifacts_removes_profile_files(self):
+        from onilock.run import _cleanup_profile_artifacts, _profile_setup_path
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            vault_dir = base / "vault"
+            backup_dir = base / "backups"
+            vault_dir.mkdir()
+            backup_dir.mkdir()
+
+            secret = Fernet.generate_key().decode()
+            cipher = Fernet(secret.encode())
+            profile_data_path = vault_dir / "profile_data.oni"
+            profile_data_path.write_text("x")
+
+            encrypted_file_path = vault_dir / "doc1.oni"
+            encrypted_file_path.write_text("enc")
+
+            backup_path = backup_dir / "onilock_work_backup_20260101000000.zip"
+            backup_path.write_text("backup")
+
+            encrypted_filepath = base64.b64encode(
+                cipher.encrypt(str(profile_data_path).encode())
+            ).decode()
+
+            setup_engine = MagicMock()
+            setup_engine.read.return_value = {"work": {"filepath": encrypted_filepath}}
+
+            profile_engine = MagicMock()
+            profile_engine.read.return_value = {
+                "files": [{"location": str(encrypted_file_path)}]
+            }
+
+            setup_db = MagicMock()
+            setup_db.get_engine.return_value = setup_engine
+            profile_db = MagicMock()
+            profile_db.get_engine.return_value = profile_engine
+
+            with patch("onilock.run.settings") as ms:
+                ms.VAULT_DIR = vault_dir
+                ms.BACKUP_DIR = backup_dir
+                ms.SECRET_KEY = secret
+                setup_path = _profile_setup_path("work")
+                setup_path.write_text("setup")
+                with patch(
+                    "onilock.run.DatabaseManager", side_effect=[setup_db, profile_db]
+                ):
+                    with patch(
+                        "onilock.run.KeyStoreManager.clear_persisted_backend",
+                        return_value=True,
+                    ):
+                        removed = _cleanup_profile_artifacts("work")
+
+            self.assertEqual(removed["setup_file"], 1)
+            self.assertEqual(removed["vault_file"], 1)
+            self.assertEqual(removed["encrypted_files"], 1)
+            self.assertEqual(removed["backups"], 1)
+            self.assertEqual(removed["keystore_backend"], 1)
+            self.assertFalse(profile_data_path.exists())
+            self.assertFalse(encrypted_file_path.exists())
+            self.assertFalse(backup_path.exists())
+
+
 class TestEncryptFileCommand(unittest.TestCase):
     def test_encrypt_file_command(self):
         from onilock.run import app, filemanager
 
-        with patch.object(filemanager, "encrypt") as mock_enc:
-            result = runner.invoke(app, ["encrypt-file", "doc1", "/tmp/test.txt"])
+        with patch("onilock.run.get_profile_engine", return_value=MagicMock()):
+            with patch.object(filemanager, "encrypt") as mock_enc:
+                result = runner.invoke(app, ["encrypt-file", "doc1", "/tmp/test.txt"])
         mock_enc.assert_called_once_with("doc1", "/tmp/test.txt")
 
 
@@ -195,21 +325,59 @@ class TestExportAllFilesCommand(unittest.TestCase):
 
 
 class TestExportVaultCommand(unittest.TestCase):
-    def test_export_vault_echoes_not_implemented(self):
+    def test_export_vault_command(self):
         from onilock.run import app
 
-        result = runner.invoke(app, ["export-vault"])
+        mock_engine = MagicMock()
+        mock_engine.read.return_value = {
+            "name": "test_profile",
+            "master_password": "hashed",
+            "vault_version": "1.8.0",
+            "creation_timestamp": 1.0,
+            "accounts": [],
+            "files": [],
+        }
+        artifacts_dir = Path(".onilock_artifacts")
+        output_path = artifacts_dir / "export-vault-test.zip"
+        with patch("onilock.run.get_profile_engine", return_value=mock_engine):
+            result = runner.invoke(
+                app,
+                [
+                    "export-vault",
+                    "--no-passwords",
+                    f"--output={output_path}",
+                ],
+            )
         self.assertEqual(result.exit_code, 0)
-        self.assertIn("not implemented", result.output.lower())
+        self.assertIn("exported vault", result.output.lower())
 
 
 class TestExportCommand(unittest.TestCase):
-    def test_export_command_echoes_not_implemented(self):
+    def test_export_command(self):
         from onilock.run import app
 
-        result = runner.invoke(app, ["export"])
+        mock_engine = MagicMock()
+        mock_engine.read.return_value = {
+            "name": "test_profile",
+            "master_password": "hashed",
+            "vault_version": "1.8.0",
+            "creation_timestamp": 1.0,
+            "accounts": [],
+            "files": [],
+        }
+        artifacts_dir = Path(".onilock_artifacts")
+        output_path = artifacts_dir / "export-test.zip"
+        with patch("onilock.run.get_profile_engine", return_value=mock_engine):
+            result = runner.invoke(
+                app,
+                [
+                    "export",
+                    "--no-passwords",
+                    f"--dist={output_path}",
+                ],
+            )
         self.assertEqual(result.exit_code, 0)
-        self.assertIn("not implemented", result.output.lower())
+        self.assertIn("exported vault", result.output.lower())
 
 
 class TestRemoveAccountCommand(unittest.TestCase):

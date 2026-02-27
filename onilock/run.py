@@ -7,6 +7,7 @@ import zipfile
 import io
 import hashlib
 from pathlib import Path
+import uuid
 import gnupg
 
 import typer
@@ -19,6 +20,7 @@ from onilock.core.utils import generate_random_password, get_version, naive_utcn
 from cryptography.fernet import Fernet
 from onilock.core.settings import settings
 from onilock.db.models import Profile, Account, File
+from onilock.db import DatabaseManager
 from onilock.db.engines import EncryptedJsonEngine
 from onilock.filemanager import FileEncryptionManager, get_output_filename
 from onilock.account_manager import (
@@ -32,9 +34,15 @@ from onilock.account_manager import (
     new_account,
     rotate_secret_key,
 )
-from onilock.core.profiles import list_profiles, set_active_profile, get_active_profile
+from onilock.core.profiles import (
+    list_profiles,
+    set_active_profile,
+    get_active_profile,
+    remove_profile,
+)
 from onilock.core.audit import audit
 from onilock.core.gpg import get_pgp_key_info, delete_pgp_key
+from onilock.core.keystore import KeyStoreManager
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.backends import default_backend
@@ -84,7 +92,7 @@ def _decrypt_export(payload: bytes, passphrase: str) -> bytes:
     return Fernet(key).decrypt(token)
 
 
-@app.command()
+@app.command(rich_help_panel="Vault")
 @exception_handler
 def initialize_vault(
     master_password: Optional[str] = None,
@@ -95,6 +103,20 @@ def initialize_vault(
     Note:
         The master password should be very secure and be saved in a safe place.
     """
+    console.print(
+        Panel(
+            "\n".join(
+                [
+                    f"[dim]Profile:[/dim] [bold]{settings.DB_NAME}[/bold]",
+                    f"[dim]Vault directory:[/dim] {settings.VAULT_DIR}",
+                    f"[dim]Setup file:[/dim] {settings.SETUP_FILEPATH}",
+                    f"[dim]GPG home:[/dim] {settings.GPG_HOME or 'default system location'}",
+                ]
+            ),
+            title="[cyan]Initialization Targets[/cyan]",
+            border_style="cyan",
+        )
+    )
 
     if not master_password:
         if not sys.stdin.isatty():
@@ -117,7 +139,7 @@ def initialize_vault(
     return initialize(master_password)
 
 
-@app.command()
+@app.command(rich_help_panel="Passwords")
 @exception_handler
 def new(
     name: str = typer.Option(..., prompt="Account name (e.g. Github)"),
@@ -137,7 +159,7 @@ def new(
     return new_account(name, password, username, url, description)
 
 
-@app.command()
+@app.command(rich_help_panel="Files")
 @exception_handler
 def encrypt_file(file_id: str, filename: str):
     """
@@ -150,7 +172,7 @@ def encrypt_file(file_id: str, filename: str):
     filemanager.encrypt(file_id, filename)
 
 
-@app.command()
+@app.command(rich_help_panel="Files")
 @exception_handler
 def read_file(file_id: str):
     """
@@ -162,7 +184,7 @@ def read_file(file_id: str):
     filemanager.read(file_id)
 
 
-@app.command()
+@app.command(rich_help_panel="Files")
 @exception_handler
 def edit_file(file_id: str):
     """
@@ -174,7 +196,7 @@ def edit_file(file_id: str):
     filemanager.open(file_id)
 
 
-@app.command()
+@app.command(rich_help_panel="Files")
 @exception_handler
 def delete_file(file_id: str):
     """
@@ -190,7 +212,7 @@ def delete_file(file_id: str):
     filemanager.delete(file_id)
 
 
-@app.command()
+@app.command(rich_help_panel="Files")
 @exception_handler
 def export_file(file_id: str, output: Optional[str] = None):
     """
@@ -203,7 +225,7 @@ def export_file(file_id: str, output: Optional[str] = None):
     filemanager.export(file_id, output)
 
 
-@app.command()
+@app.command(rich_help_panel="Files")
 @exception_handler
 def export_all_files(output: Optional[str] = None):
     """
@@ -215,7 +237,7 @@ def export_all_files(output: Optional[str] = None):
     filemanager.export(file_path=output)
 
 
-@app.command()
+@app.command(rich_help_panel="Vault")
 @exception_handler
 def backup(
     output: Optional[str] = None,
@@ -241,7 +263,7 @@ def backup(
     )
 
 
-@app.command()
+@app.command(rich_help_panel="Vault")
 @exception_handler
 def restore(
     path: str,
@@ -258,7 +280,7 @@ def restore(
     import_vault(path, passwords=True, files=True, verify=True, replace=replace, passphrase=passphrase)
 
 
-@app.command()
+@app.command(rich_help_panel="Vault")
 @exception_handler
 def import_vault(
     path: str,
@@ -384,7 +406,7 @@ def import_vault(
         audit("vault.imported", source=path, passwords=passwords, files=files, replace=replace)
 
 
-@app.command()
+@app.command(rich_help_panel="Vault")
 @exception_handler
 def export_vault(
     output: Optional[str] = None,
@@ -404,7 +426,13 @@ def export_vault(
     """
     Export the entire OniLock vault (accounts + files).
     """
-    console.print("[bold yellow]![/bold yellow] export-vault not implemented yet.")
+    return _export_vault_impl(
+        output=output,
+        passwords=passwords,
+        files=files,
+        encrypt=encrypt,
+        passphrase=passphrase,
+    )
 
 
 def _export_vault_impl(
@@ -556,7 +584,7 @@ def _export_vault_impl(
     audit("vault.exported", output=str(output_path), passwords=passwords, files=files, encrypted=encrypt)
 
 
-@app.command("list")
+@app.command("list", rich_help_panel="Passwords")
 @exception_handler
 def accounts():
     """List all stored accounts."""
@@ -564,7 +592,7 @@ def accounts():
     return list_accounts()
 
 
-@app.command("list-files")
+@app.command("list-files", rich_help_panel="Files")
 @exception_handler
 def list_all_files():
     """List all encrypted files stored in the vault."""
@@ -595,7 +623,150 @@ def profiles_use(name: str):
     )
 
 
-@app.command()
+def _profile_setup_path(name: str) -> Path:
+    filename = str(uuid.uuid5(uuid.NAMESPACE_DNS, name + "_oni")).split("-")[-1]
+    return Path(settings.VAULT_DIR) / f"{filename}.oni"
+
+
+def _cleanup_profile_artifacts(name: str) -> dict[str, int]:
+    removed = {
+        "setup_file": 0,
+        "vault_file": 0,
+        "encrypted_files": 0,
+        "backups": 0,
+        "keystore_backend": 0,
+    }
+
+    setup_path = _profile_setup_path(name)
+    profile_path: Optional[Path] = None
+
+    if setup_path.exists():
+        try:
+            setup_engine = DatabaseManager(
+                database_url=str(setup_path), is_encrypted=True
+            ).get_engine()
+            setup_data = setup_engine.read() or {}
+            if isinstance(setup_data, dict):
+                profile_info = setup_data.get(name, {})
+                encrypted_fp = profile_info.get("filepath")
+                if encrypted_fp:
+                    cipher = Fernet(settings.SECRET_KEY.encode())
+                    decrypted_fp = cipher.decrypt(
+                        base64.b64decode(encrypted_fp)
+                    ).decode()
+                    profile_path = Path(decrypted_fp)
+        except Exception:
+            profile_path = None
+
+        try:
+            setup_path.unlink()
+            removed["setup_file"] = 1
+        except OSError:
+            pass
+
+    if profile_path and profile_path.exists():
+        try:
+            profile_engine = DatabaseManager(
+                database_url=str(profile_path), is_encrypted=True
+            ).get_engine()
+            profile_data = profile_engine.read() or {}
+            if isinstance(profile_data, dict):
+                for file_data in profile_data.get("files", []):
+                    location = file_data.get("location")
+                    if not location:
+                        continue
+                    target = Path(location)
+                    if target.exists():
+                        try:
+                            target.unlink()
+                            removed["encrypted_files"] += 1
+                        except OSError:
+                            pass
+        except Exception:
+            pass
+
+        try:
+            profile_path.unlink()
+            removed["vault_file"] = 1
+        except OSError:
+            pass
+
+    backup_dir = Path(settings.BACKUP_DIR)
+    if backup_dir.exists():
+        for backup_file in backup_dir.glob(f"onilock_{name}_backup_*"):
+            if not backup_file.is_file():
+                continue
+            try:
+                backup_file.unlink()
+                removed["backups"] += 1
+            except OSError:
+                pass
+
+    if KeyStoreManager.clear_persisted_backend(name):
+        removed["keystore_backend"] = 1
+
+    return removed
+
+
+@profiles_app.command("remove")
+def profiles_remove(
+    name: str,
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Skip interactive confirmation prompt.",
+    ),
+):
+    """Remove a profile and permanently delete all related local data."""
+    profiles = list_profiles()
+    if name not in profiles:
+        console.print(f"[bold red]✗[/bold red] Profile '{name}' was not found.")
+        raise SystemExit(1)
+
+    console.print(
+        Panel(
+            (
+                "[bold red]WARNING: This action is irreversible.[/bold red]\n\n"
+                "It will permanently delete this profile's vault files, setup file, "
+                "encrypted file artifacts, backups, and stored keystore backend choice."
+            ),
+            title="[red]Danger Zone[/red]",
+            border_style="red",
+        )
+    )
+
+    if not force:
+        typer.confirm(
+            f"Delete profile '{name}' and all related data?",
+            abort=True,
+        )
+
+    removed = _cleanup_profile_artifacts(name)
+    previously_active = get_active_profile()
+    remove_profile(name)
+
+    if previously_active == name:
+        remaining_profiles = list_profiles()
+        if remaining_profiles:
+            set_active_profile(remaining_profiles[0])
+            console.print(
+                f"[bold yellow]![/bold yellow] Active profile switched to [bold]{remaining_profiles[0]}[/bold]."
+            )
+        elif settings.PROFILE_PATH.exists():
+            try:
+                settings.PROFILE_PATH.unlink()
+            except OSError:
+                pass
+
+    audit("profile.removed", profile=name, removed=removed)
+    console.print(
+        f"[bold green]✓[/bold green] Profile [bold]{name}[/bold] removed. "
+        f"(vault={removed['vault_file']}, setup={removed['setup_file']}, "
+        f"files={removed['encrypted_files']}, backups={removed['backups']})"
+    )
+
+
+@app.command(rich_help_panel="Passwords")
 @exception_handler
 def copy(name: str):
     """
@@ -658,7 +829,7 @@ def keys_rotate_secret():
     console.print("[bold green]✓[/bold green] Vault secret key rotated.")
 
 
-@app.command()
+@app.command(rich_help_panel="Passwords")
 @exception_handler
 def remove_account(name: str):
     """
@@ -671,7 +842,7 @@ def remove_account(name: str):
     return am_remove_account(name)
 
 
-@app.command()
+@app.command(rich_help_panel="Passwords")
 @exception_handler
 def generate_pwd(
     len: int = typer.Option(8, prompt="Password length"),
@@ -690,7 +861,7 @@ def generate_pwd(
     )
 
 
-@app.command()
+@app.command(rich_help_panel="Utilities")
 @exception_handler
 def doctor():
     """
@@ -749,7 +920,7 @@ def doctor():
         console.print(f"{status} {label}")
 
 
-@app.command()
+@app.command(rich_help_panel="Utilities")
 @exception_handler
 def generate_fernet_key():
     """
@@ -765,7 +936,7 @@ def generate_fernet_key():
     )
 
 
-@app.command()
+@app.command(rich_help_panel="Vault")
 @exception_handler
 def erase_user_data(
     master_password: str = typer.Option(
@@ -783,7 +954,7 @@ def erase_user_data(
     return delete_profile(master_password)
 
 
-@app.command()
+@app.command(rich_help_panel="Utilities")
 @exception_handler
 def version(
     vault_format: bool = typer.Option(
@@ -811,7 +982,7 @@ def version(
     )
 
 
-@app.command("vault-format")
+@app.command("vault-format", rich_help_panel="Utilities")
 @exception_handler
 def _get_vault_format() -> str:
     engine = get_profile_engine()
@@ -844,7 +1015,7 @@ def vault_format_cmd():
     console.print(_get_vault_format())
 
 
-@app.command()
+@app.command(rich_help_panel="Vault")
 @exception_handler
 def export(
     dist: str = ".",
@@ -867,7 +1038,13 @@ def export(
     Args:
         dist (str): Destination path. Defaults to current directory.
     """
-    console.print("[bold yellow]![/bold yellow] export not implemented yet.")
+    return _export_vault_impl(
+        output=dist,
+        passwords=passwords,
+        files=files,
+        encrypt=encrypt,
+        passphrase=passphrase,
+    )
 
 
 @app.callback()
@@ -877,8 +1054,8 @@ def main():
     """
 
 
-app.add_typer(profiles_app, name="profiles")
-app.add_typer(keys_app, name="keys")
+app.add_typer(profiles_app, name="profiles", rich_help_panel="Profiles")
+app.add_typer(keys_app, name="keys", rich_help_panel="Keys")
 
 if __name__ == "__main__":
     app()

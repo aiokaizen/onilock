@@ -2,7 +2,9 @@
 
 import os
 import unittest
+import tempfile
 from unittest.mock import MagicMock, patch
+from pathlib import Path
 
 from onilock.core.keystore import VaultKeyStore, KeyRing, KeyStoreManager, KeyStore
 
@@ -134,6 +136,18 @@ class TestKeyRing(unittest.TestCase):
 
 
 class TestKeyStoreManager(unittest.TestCase):
+    def setUp(self):
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.backend_file = Path(self._tmpdir.name) / "keystore_backends.json"
+        self._backend_patch = patch.object(
+            KeyStoreManager, "BACKEND_FILE", self.backend_file
+        )
+        self._backend_patch.start()
+
+    def tearDown(self):
+        self._backend_patch.stop()
+        self._tmpdir.cleanup()
+
     def test_selects_keyring_when_available(self):
         with patch.dict(os.environ, {"ONI_DEFAULT_KEYSTORE_BACKEND": "keyring"}):
             with patch("onilock.core.keystore.KeyRing") as MockKeyRing:
@@ -169,6 +183,32 @@ class TestKeyStoreManager(unittest.TestCase):
 
         manager.clear()
         mock_store.clear.assert_called_once()
+
+    def test_persists_fallback_backend_and_reuses_it(self):
+        with patch.dict(os.environ, {"ONI_DEFAULT_KEYSTORE_BACKEND": "keyring"}):
+            with patch("onilock.core.keystore.KeyRing", side_effect=Exception("no kr")):
+                manager = KeyStoreManager("onilock_fallback_test")
+        self.assertIsInstance(manager.keystore, VaultKeyStore)
+        self.assertTrue(self.backend_file.exists())
+
+        with patch.dict(os.environ, {"ONI_DEFAULT_KEYSTORE_BACKEND": "keyring"}):
+            with patch("onilock.core.keystore.KeyRing") as mock_keyring:
+                manager2 = KeyStoreManager("onilock_fallback_test")
+        mock_keyring.assert_not_called()
+        self.assertIsInstance(manager2.keystore, VaultKeyStore)
+
+    def test_clear_persisted_backend_removes_entry(self):
+        self.backend_file.write_text('{"work":"vault","personal":"keyring"}')
+        removed = KeyStoreManager.clear_persisted_backend("work")
+        self.assertTrue(removed)
+        data = self.backend_file.read_text()
+        self.assertIn("personal", data)
+        self.assertNotIn("work", data)
+
+    def test_clear_persisted_backend_missing_returns_false(self):
+        self.backend_file.write_text('{"personal":"keyring"}')
+        removed = KeyStoreManager.clear_persisted_backend("work")
+        self.assertFalse(removed)
 
 
 class TestKeyStoreAbstract(unittest.TestCase):

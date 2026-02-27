@@ -64,9 +64,9 @@ class TestFileEncryptionManagerInit(unittest.TestCase):
     def test_init_with_gpg_home(self):
         with patch("onilock.filemanager.gnupg.GPG") as MockGPG:
             MockGPG.return_value = MagicMock()
-            manager = FileEncryptionManager(gpg_home="/custom/gpg")
+            manager = FileEncryptionManager(gpg_home="/tmp/custom/gpg")
 
-        MockGPG.assert_called_once_with(gnupghome="/custom/gpg")
+        MockGPG.assert_called_once_with(gnupghome="/tmp/custom/gpg")
 
 
 class TestFileEncryptionManagerProperties(unittest.TestCase):
