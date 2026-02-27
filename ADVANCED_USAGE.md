@@ -107,6 +107,21 @@ Defaults:
 - Newest-first display order.
 - Maximum stored history entries per account controlled by `ONI_HISTORY_MAX` (default `20`).
 
+## Password Rotation
+Use `rotate` to generate and store a new password for an account.
+The previous encrypted secret is automatically saved to history with reason `rotate`.
+
+Examples:
+```sh
+onilock rotate github
+onilock rotate github --len 24 --no-special-chars
+onilock rotate github --json
+```
+
+Notes:
+- Human output prints a summary only, not the raw password.
+- Password health is recalculated after rotation.
+
 ## Master Password Security
 Master password handling includes:
 - Bcrypt KDF with configurable rounds (`ONI_BCRYPT_ROUNDS`)

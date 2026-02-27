@@ -6,6 +6,7 @@
 - Add encrypted per-account notes with `notes set|get|clear` commands.
 - Add per-account tags with `tags add|remove|list` commands and normalized tag handling.
 - Add password version history tracking and `history` command with limits and JSON output.
+- Add `rotate` command to generate/store new account passwords with history integration.
 
 ## v1.8.0
 - Introduce versioned AEAD vault format (v2, AES-GCM) with automatic legacy migration.

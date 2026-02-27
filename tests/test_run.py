@@ -289,6 +289,35 @@ class TestHistoryCommands(unittest.TestCase):
         mock_history.assert_called_once_with("github", limit=3)
 
 
+class TestRotateCommands(unittest.TestCase):
+    def test_rotate_calls_manager(self):
+        from onilock.run import app
+
+        payload = {"id": "github", "rotated": True, "history_size": 1}
+        with patch("onilock.run.rotate_account_password", return_value=payload) as mock_rotate:
+            result = runner.invoke(
+                app,
+                ["rotate", "github", "--len", "24", "--no-special-chars"],
+            )
+        self.assertEqual(result.exit_code, 0)
+        mock_rotate.assert_called_once_with(
+            "github",
+            length=24,
+            include_special_chars=False,
+        )
+
+    def test_rotate_json_output(self):
+        from onilock.run import app
+
+        payload = {"id": "github", "rotated": True, "history_size": 1}
+        with patch("onilock.run.rotate_account_password", return_value=payload):
+            result = runner.invoke(app, ["rotate", "github", "--json"])
+        self.assertEqual(result.exit_code, 0)
+        data = json.loads(result.output)
+        self.assertEqual(data["id"], "github")
+        self.assertTrue(data["rotated"])
+
+
 class TestProfilesCommand(unittest.TestCase):
     def test_profiles_remove_force(self):
         from onilock.run import app
