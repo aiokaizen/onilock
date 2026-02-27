@@ -32,6 +32,7 @@ from onilock.account_manager import (
     get_accounts_payload,
     get_files_payload,
     get_password_health_report,
+    import_secrets,
     list_account_tags,
     get_profile_engine,
     get_account_secret,
@@ -445,6 +446,42 @@ def import_vault(
         engine.write(profile.model_dump())
         console.print("[bold green]✓[/bold green] Import completed.")
         audit("vault.imported", source=path, passwords=passwords, files=files, replace=replace)
+
+
+@app.command("import-secrets", rich_help_panel="Vault")
+@exception_handler
+def import_secrets_cmd(
+    format_name: str = typer.Option(
+        ...,
+        "--format",
+        help="Import format: csv or keepass-xml.",
+    ),
+    path: str = typer.Option(..., "--path", help="Path to import source file."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Preview without writing."),
+    replace_existing: bool = typer.Option(
+        False, "--replace-existing", help="Replace existing accounts with imported values."
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", help="Print machine-readable JSON output."
+    ),
+):
+    """Import secrets from CSV or KeePass XML export."""
+    require_unlock_if_enabled()
+    payload = import_secrets(
+        format_name,
+        path,
+        dry_run=dry_run,
+        replace_existing=replace_existing,
+    )
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+    console.print(
+        "[bold green]✓[/bold green] Import complete "
+        f"(processed={payload['processed']}, created={payload['created']}, "
+        f"updated={payload['updated']}, skipped_existing={payload['skipped_existing']}, "
+        f"invalid={payload['invalid']}, dry_run={payload['dry_run']})."
+    )
 
 
 @app.command(rich_help_panel="Vault")

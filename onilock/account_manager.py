@@ -6,6 +6,9 @@ import multiprocessing
 import os
 import json
 import time
+import csv
+import re
+import xml.etree.ElementTree as ET
 from typing import Optional, Iterable
 import base64
 from difflib import SequenceMatcher
@@ -58,6 +61,7 @@ __all__ = [
     "get_password_health_report",
     "get_accounts_payload",
     "get_files_payload",
+    "import_secrets",
     "unlock_with_pin",
     "reset_profile_pin",
     "require_unlock_if_enabled",
@@ -1016,6 +1020,217 @@ def get_password_health_report(
     ]
     health = password_health(current, others)
     return {"id": account.id, "health": health}
+
+
+def _split_tags(raw: str) -> list[str]:
+    if not raw:
+        return []
+    return _normalize_tags([part for part in re.split(r"[;,]", raw) if part.strip()])
+
+
+def _parse_csv_records(path: str) -> list[dict]:
+    with open(path, "r", newline="", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        records = []
+        for row in reader:
+            lowered = {str(k).strip().lower(): (v or "") for k, v in row.items()}
+            account_id = (
+                lowered.get("id")
+                or lowered.get("title")
+                or lowered.get("name")
+                or lowered.get("account")
+                or ""
+            ).strip()
+            tags_raw = lowered.get("tags") or lowered.get("tag") or ""
+            records.append(
+                {
+                    "id": account_id,
+                    "username": (lowered.get("username") or lowered.get("user") or "").strip(),
+                    "password": (lowered.get("password") or lowered.get("pass") or "").strip(),
+                    "url": (lowered.get("url") or "").strip(),
+                    "notes": (lowered.get("notes") or lowered.get("note") or "").strip(),
+                    "tags": _split_tags(tags_raw),
+                }
+            )
+    return records
+
+
+def _parse_keepass_xml_records(path: str) -> list[dict]:
+    try:
+        tree = ET.parse(path)
+    except ET.ParseError as exc:
+        raise RuntimeError(f"Invalid KeePass XML: {exc}") from exc
+
+    records = []
+    for entry in tree.findall(".//Entry"):
+        values = {}
+        for string_node in entry.findall("String"):
+            key = (string_node.findtext("Key") or "").strip()
+            value = (string_node.findtext("Value") or "").strip()
+            if key:
+                values[key] = value
+
+        tags_raw = (entry.findtext("Tags") or values.get("Tags") or "").strip()
+        records.append(
+            {
+                "id": (values.get("Title") or values.get("id") or "").strip(),
+                "username": (values.get("UserName") or "").strip(),
+                "password": (values.get("Password") or "").strip(),
+                "url": (values.get("URL") or "").strip(),
+                "notes": (values.get("Notes") or "").strip(),
+                "tags": _split_tags(tags_raw),
+            }
+        )
+    return records
+
+
+def _parse_import_records(secret_format: str, path: str) -> list[dict]:
+    fmt = secret_format.lower().strip()
+    if fmt == "csv":
+        return _parse_csv_records(path)
+    if fmt == "keepass-xml":
+        return _parse_keepass_xml_records(path)
+    raise RuntimeError(f"Unsupported import format: {secret_format}")
+
+
+def _replace_password_in_profile(profile: Profile, account: Account, new_password: str, reason: str):
+    history = []
+    for entry in getattr(account, "history", []) or []:
+        if isinstance(entry, PasswordVersion):
+            history.append(entry)
+            continue
+        try:
+            history.append(PasswordVersion(**entry))
+        except Exception:
+            continue
+    history.append(
+        PasswordVersion(
+            encrypted_password=account.encrypted_password,
+            created_at=int(naive_utcnow().timestamp()),
+            reason=reason,
+        )
+    )
+    account.history = history[-_get_history_max():]
+
+    cipher = Fernet(settings.SECRET_KEY.encode())
+    encrypted_password = cipher.encrypt(new_password.encode())
+    account.encrypted_password = base64.b64encode(encrypted_password).decode()
+
+    existing_passwords = []
+    for acct in profile.accounts:
+        if acct.id.lower() == account.id.lower():
+            continue
+        decrypted = _decrypt_account_password(cipher, acct)
+        if decrypted is not None:
+            existing_passwords.append(decrypted)
+    health = password_health(new_password, existing_passwords)
+    account.is_weak_password = health["strength"] != "strong"
+
+
+def import_secrets(
+    secret_format: str,
+    path: str,
+    dry_run: bool = False,
+    replace_existing: bool = False,
+):
+    records = _parse_import_records(secret_format, path)
+    engine = get_profile_engine()
+    if not engine:
+        error(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+        )
+        exit(1)
+    data = engine.read()
+    if not data:
+        error(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+        )
+        exit(1)
+
+    profile = Profile(**data)
+    summary = {
+        "format": secret_format.lower(),
+        "processed": len(records),
+        "created": 0,
+        "updated": 0,
+        "skipped_existing": 0,
+        "invalid": 0,
+        "dry_run": dry_run,
+    }
+
+    cipher = Fernet(settings.SECRET_KEY.encode())
+    changed = False
+    for record in records:
+        account_id = record.get("id", "").strip()
+        password = record.get("password", "").strip()
+        if not account_id or not password:
+            summary["invalid"] += 1
+            continue
+
+        account = profile.get_account(account_id)
+        tags = _normalize_tags(record.get("tags", []))
+        note_text = record.get("notes", "")
+        note_value = (
+            base64.b64encode(cipher.encrypt(note_text.encode())).decode()
+            if note_text
+            else None
+        )
+
+        if account:
+            if not replace_existing:
+                summary["skipped_existing"] += 1
+                continue
+
+            summary["updated"] += 1
+            if dry_run:
+                continue
+
+            _replace_password_in_profile(profile, account, password, reason="replace")
+            account.username = record.get("username", "") or account.username
+            account.url = record.get("url", "") or account.url
+            account.notes = note_value
+            account.tags = tags
+            changed = True
+            continue
+
+        summary["created"] += 1
+        if dry_run:
+            continue
+
+        encrypted_password = cipher.encrypt(password.encode())
+        existing_passwords = []
+        for acct in profile.accounts:
+            decrypted = _decrypt_account_password(cipher, acct)
+            if decrypted is not None:
+                existing_passwords.append(decrypted)
+        health = password_health(password, existing_passwords)
+        profile.accounts.append(
+            Account(
+                id=account_id,
+                encrypted_password=base64.b64encode(encrypted_password).decode(),
+                username=record.get("username", ""),
+                url=record.get("url", "") or None,
+                description=None,
+                notes=note_value,
+                tags=tags,
+                is_weak_password=health["strength"] != "strong",
+                created_at=int(naive_utcnow().timestamp()),
+            )
+        )
+        changed = True
+
+    if changed and not dry_run:
+        engine.write(profile.model_dump())
+        audit(
+            "vault.import.secrets",
+            format=summary["format"],
+            created=summary["created"],
+            updated=summary["updated"],
+            skipped_existing=summary["skipped_existing"],
+            invalid=summary["invalid"],
+        )
+
+    return summary
 
 
 def set_account_note(id: str | int, note: str):

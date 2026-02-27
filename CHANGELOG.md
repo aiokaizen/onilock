@@ -10,6 +10,7 @@
 - Add `health` command for single-account and vault-wide password health reporting.
 - Add optional 4-digit PIN unlock sessions with `unlock` and `pin reset`, and sensitive-command gating.
 - Add shell-safe `--json` outputs for `list`, `list-files`, and `doctor` (plus existing JSON-capable commands).
+- Add `import-secrets` for secure CSV and KeePass XML imports with `--dry-run` and duplicate handling.
 
 ## v1.8.0
 - Introduce versioned AEAD vault format (v2, AES-GCM) with automatic legacy migration.

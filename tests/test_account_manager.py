@@ -877,6 +877,105 @@ class TestPinUnlock(unittest.TestCase):
                         require_unlock_if_enabled()
 
 
+class TestImportSecrets(unittest.TestCase):
+    def test_import_csv_dry_run(self):
+        profile = _make_profile()
+        engine = _make_engine(profile)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            csv_path = Path(tmpdir) / "secrets.csv"
+            csv_path.write_text(
+                "id,username,password,url,notes,tags\n"
+                "github,octocat,Sup3rPass!23,https://github.com,prod creds,\"prod,infra\"\n"
+            )
+            with patch("onilock.account_manager.get_profile_engine", return_value=engine):
+                with patch("onilock.account_manager.settings") as ms:
+                    ms.SECRET_KEY = TEST_SECRET_KEY
+                    from onilock.account_manager import import_secrets
+
+                    payload = import_secrets(
+                        "csv",
+                        str(csv_path),
+                        dry_run=True,
+                        replace_existing=False,
+                    )
+
+        self.assertEqual(payload["created"], 1)
+        engine.write.assert_not_called()
+
+    def test_import_csv_duplicate_skip_and_replace(self):
+        profile = _make_profile(with_account=True)
+        store = profile.model_dump()
+        engine = MagicMock()
+        engine.read.side_effect = lambda: store
+        engine.write.side_effect = lambda payload: store.update(payload)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            csv_path = Path(tmpdir) / "secrets.csv"
+            csv_path.write_text(
+                "id,username,password,url\n"
+                "github,newuser,NewPass!456,https://github.com\n"
+            )
+            with patch("onilock.account_manager.get_profile_engine", return_value=engine):
+                with patch("onilock.account_manager.settings") as ms:
+                    ms.SECRET_KEY = TEST_SECRET_KEY
+                    ms.ONI_HISTORY_MAX = 20
+                    from onilock.account_manager import import_secrets
+
+                    skipped = import_secrets(
+                        "csv",
+                        str(csv_path),
+                        dry_run=False,
+                        replace_existing=False,
+                    )
+                    replaced = import_secrets(
+                        "csv",
+                        str(csv_path),
+                        dry_run=False,
+                        replace_existing=True,
+                    )
+
+        self.assertEqual(skipped["skipped_existing"], 1)
+        self.assertEqual(replaced["updated"], 1)
+
+    def test_import_keepass_xml_and_malformed_xml(self):
+        profile = _make_profile()
+        engine = _make_engine(profile)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            xml_path = Path(tmpdir) / "keepass.xml"
+            xml_path.write_text(
+                "<KeePassFile><Root><Group><Entry>"
+                "<String><Key>Title</Key><Value>gitlab</Value></String>"
+                "<String><Key>UserName</Key><Value>root</Value></String>"
+                "<String><Key>Password</Key><Value>StrongPass!123</Value></String>"
+                "<String><Key>URL</Key><Value>https://gitlab.com</Value></String>"
+                "<String><Key>Notes</Key><Value>infra</Value></String>"
+                "<Tags>prod;infra</Tags>"
+                "</Entry></Group></Root></KeePassFile>"
+            )
+            bad_xml_path = Path(tmpdir) / "broken.xml"
+            bad_xml_path.write_text("<KeePassFile><Root><Group>")
+            with patch("onilock.account_manager.get_profile_engine", return_value=engine):
+                with patch("onilock.account_manager.settings") as ms:
+                    ms.SECRET_KEY = TEST_SECRET_KEY
+                    from onilock.account_manager import import_secrets
+
+                    payload = import_secrets(
+                        "keepass-xml",
+                        str(xml_path),
+                        dry_run=True,
+                        replace_existing=False,
+                    )
+                    with self.assertRaises(RuntimeError):
+                        import_secrets(
+                            "keepass-xml",
+                            str(bad_xml_path),
+                            dry_run=True,
+                            replace_existing=False,
+                        )
+
+        self.assertEqual(payload["created"], 1)
+
+
 class TestRemoveAccount(unittest.TestCase):
     def test_remove_valid_account(self):
         profile = _make_profile(with_account=True)

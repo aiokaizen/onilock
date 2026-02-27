@@ -415,6 +415,44 @@ class TestShellSafeJsonOutputs(unittest.TestCase):
         self.assertTrue(data["ok"])
 
 
+class TestImportSecretsCommand(unittest.TestCase):
+    def test_import_secrets_json(self):
+        from onilock.run import app
+
+        payload = {
+            "format": "csv",
+            "processed": 2,
+            "created": 1,
+            "updated": 0,
+            "skipped_existing": 1,
+            "invalid": 0,
+            "dry_run": True,
+        }
+        with patch("onilock.run.require_unlock_if_enabled"):
+            with patch("onilock.run.import_secrets", return_value=payload) as mock_import:
+                result = runner.invoke(
+                    app,
+                    [
+                        "import-secrets",
+                        "--format",
+                        "csv",
+                        "--path",
+                        "/tmp/secrets.csv",
+                        "--dry-run",
+                        "--json",
+                    ],
+                )
+        self.assertEqual(result.exit_code, 0)
+        data = json.loads(result.output)
+        self.assertEqual(data["format"], "csv")
+        mock_import.assert_called_once_with(
+            "csv",
+            "/tmp/secrets.csv",
+            dry_run=True,
+            replace_existing=False,
+        )
+
+
 class TestProfilesCommand(unittest.TestCase):
     def test_profiles_remove_force(self):
         from onilock.run import app
