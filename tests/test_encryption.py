@@ -80,7 +80,9 @@ class TestEncryptionBackendManager(unittest.TestCase):
         mock_b = MagicMock()
         mgr = self._make_manager(mock_b)
         mgr.get_key_info("key_id", GPGKeyIDType.NAME_REAL)
-        mock_b.get_key_info.assert_called_with("key_id", GPGKeyIDType.NAME_REAL)
+        mock_b.get_key_info.assert_called_with(
+            "key_id", GPGKeyIDType.NAME_REAL, secret=False
+        )
 
     def test_delete_key_delegates(self):
         mock_b = MagicMock()

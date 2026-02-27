@@ -425,7 +425,8 @@ class TestCopyAccountPassword(unittest.TestCase):
 
                             copy_account_password("github")
 
-        mock_copy.assert_called_once()
+        self.assertGreaterEqual(mock_copy.call_count, 1)
+        self.assertEqual(mock_copy.call_args_list[-1], call("mypassword"))
         mock_exit.assert_called_once_with(0)
         mock_proc_inst.start.assert_called_once()
 
@@ -478,6 +479,7 @@ class TestDeleteProfile(unittest.TestCase):
                                 ms.GPG_HOME = "/tmp/gpg"
                                 ms.PGP_REAL_NAME = "test"
                                 ms.VAULT_DIR = "/tmp/vault"
+                                ms.DB_NAME = "test_profile"
                                 from onilock.account_manager import delete_profile
 
                                 delete_profile(TEST_MASTER_PASSWORD)

@@ -404,7 +404,13 @@ def export_vault(
     """
     Export the entire OniLock vault (accounts + files).
     """
-    console.print("[bold yellow]![/bold yellow] export-vault not implemented yet.")
+    return _export_vault_impl(
+        output=output,
+        passwords=passwords,
+        files=files,
+        encrypt=encrypt,
+        passphrase=passphrase,
+    )
 
 
 def _export_vault_impl(
@@ -867,7 +873,13 @@ def export(
     Args:
         dist (str): Destination path. Defaults to current directory.
     """
-    console.print("[bold yellow]![/bold yellow] export not implemented yet.")
+    return _export_vault_impl(
+        output=dist,
+        passwords=passwords,
+        files=files,
+        encrypt=encrypt,
+        passphrase=passphrase,
+    )
 
 
 @app.callback()
