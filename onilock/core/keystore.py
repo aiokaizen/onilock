@@ -4,6 +4,7 @@ import logging
 from pathlib import Path
 from typing import Dict, Optional, Set
 import uuid
+import getpass
 from abc import ABC, abstractmethod
 
 import keyring
@@ -192,25 +193,84 @@ class VaultKeyStore(KeyStore):
 class KeyStoreManager:
     """A class manager for KeyStore interface."""
 
+    BACKEND_FILE = Path.home() / ".onilock" / "keystore_backends.json"
     keystore: KeyStore
 
     def __init__(self, keystore_id: str):
         """Initialize the KeyStore manger class."""
 
-        default_backend = os.environ.get(
+        account_key = self._get_account_key()
+        default_backend = self._get_persisted_backend(account_key) or os.environ.get(
             "ONI_DEFAULT_KEYSTORE_BACKEND", KeyStoreBackendEnum.KEYRING.value
         )
 
         if default_backend == KeyStoreBackendEnum.KEYRING.value:
             try:
                 self.keystore = KeyRing(keystore_id)
+                self._persist_backend(account_key, KeyStoreBackendEnum.KEYRING.value)
             except Exception as e:
                 logging.getLogger(__name__).warning(
                     "System keyring unavailable (%s), falling back to VaultKeyStore.", e
                 )
                 self.keystore = VaultKeyStore(keystore_id)
+                self._persist_backend(account_key, KeyStoreBackendEnum.VAULT.value)
         elif default_backend == KeyStoreBackendEnum.VAULT.value:
             self.keystore = VaultKeyStore(keystore_id)
+            self._persist_backend(account_key, KeyStoreBackendEnum.VAULT.value)
+        else:
+            logging.getLogger(__name__).warning(
+                "Unknown keystore backend '%s', falling back to VaultKeyStore.",
+                default_backend,
+            )
+            self.keystore = VaultKeyStore(keystore_id)
+            self._persist_backend(account_key, KeyStoreBackendEnum.VAULT.value)
+
+    def _get_account_key(self) -> str:
+        profile = os.environ.get("ONI_DB_NAME")
+        if profile:
+            return profile
+
+        profile_path = Path.home() / ".onilock" / ".profile"
+        if profile_path.exists():
+            try:
+                value = profile_path.read_text().strip()
+                if value:
+                    return value
+            except OSError:
+                pass
+
+        return getpass.getuser()
+
+    def _get_persisted_backend(self, account_key: str) -> Optional[str]:
+        data = self._read_backend_map()
+        backend = data.get(account_key)
+        valid = {KeyStoreBackendEnum.KEYRING.value, KeyStoreBackendEnum.VAULT.value}
+        return backend if backend in valid else None
+
+    def _persist_backend(self, account_key: str, backend: str) -> None:
+        data = self._read_backend_map()
+        if data.get(account_key) == backend:
+            return
+        data[account_key] = backend
+        try:
+            self.BACKEND_FILE.parent.mkdir(parents=True, exist_ok=True)
+            self.BACKEND_FILE.write_text(json.dumps(data, indent=2))
+        except OSError:
+            logging.getLogger(__name__).warning(
+                "Unable to persist keystore backend for account '%s'.",
+                account_key,
+            )
+
+    def _read_backend_map(self) -> Dict[str, str]:
+        try:
+            if not self.BACKEND_FILE.exists():
+                return {}
+            data = json.loads(self.BACKEND_FILE.read_text())
+            if isinstance(data, dict):
+                return data
+        except Exception:
+            pass
+        return {}
 
     def clear(self) -> None:
         return self.keystore.clear()
