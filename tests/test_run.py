@@ -318,6 +318,36 @@ class TestRotateCommands(unittest.TestCase):
         self.assertTrue(data["rotated"])
 
 
+class TestHealthCommands(unittest.TestCase):
+    def test_health_single_account(self):
+        from onilock.run import app
+
+        payload = {
+            "id": "github",
+            "health": {"strength": "strong", "reasons": [], "entropy_bits": 80},
+        }
+        with patch("onilock.run.get_password_health_report", return_value=payload) as mock_health:
+            result = runner.invoke(app, ["health", "github"])
+        self.assertEqual(result.exit_code, 0)
+        mock_health.assert_called_once_with("github", all_accounts=False)
+
+    def test_health_all_json(self):
+        from onilock.run import app
+
+        payload = {
+            "summary": {"total": 2, "strong": 1, "weak": 1},
+            "accounts": [
+                {"id": "github", "strength": "weak"},
+                {"id": "gitlab", "strength": "strong"},
+            ],
+        }
+        with patch("onilock.run.get_password_health_report", return_value=payload):
+            result = runner.invoke(app, ["health", "--all", "--json"])
+        self.assertEqual(result.exit_code, 0)
+        data = json.loads(result.output)
+        self.assertEqual(data["summary"]["total"], 2)
+
+
 class TestProfilesCommand(unittest.TestCase):
     def test_profiles_remove_force(self):
         from onilock.run import app

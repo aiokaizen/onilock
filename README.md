@@ -133,6 +133,14 @@ onilock rotate github --json
 ```
 Generates a new password, stores it, and pushes the previous secret into history.
 
+### 🔹 Password Health Report
+```sh
+onilock health github
+onilock health --all
+onilock health --all --json
+```
+Shows health checks for one account or the full vault.
+
 ### 🔹 Remove an Account
 ```sh
 onilock remove-account <account_name>

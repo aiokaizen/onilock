@@ -29,6 +29,7 @@ from onilock.account_manager import (
     copy_account_password,
     delete_profile,
     get_account_history,
+    get_password_health_report,
     list_account_tags,
     get_profile_engine,
     get_account_secret,
@@ -952,6 +953,62 @@ def rotate(
     console.print(
         f"[bold green]✓[/bold green] Rotated password for [bold]{payload['id']}[/bold] "
         f"(history entries: {payload['history_size']}, health: {health})."
+    )
+
+
+@app.command(rich_help_panel="Passwords")
+@exception_handler
+def health(
+    account: Optional[str] = typer.Argument(
+        None, help="Account name/index. Omit when using --all."
+    ),
+    all: bool = typer.Option(False, "--all", help="Report health for all accounts."),
+    json_output: bool = typer.Option(
+        False, "--json", help="Print machine-readable JSON output."
+    ),
+):
+    """Show password health for one account or the whole vault."""
+    account_id: str | int | None = account
+    if account and not all:
+        try:
+            account_id = int(account) - 1
+        except ValueError:
+            pass
+
+    payload = get_password_health_report(account_id, all_accounts=all)
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+
+    if all:
+        from rich.table import Table
+
+        summary = payload["summary"]
+        console.print(
+            f"[bold]Accounts:[/bold] {summary['total']}  "
+            f"[green]strong:[/green] {summary['strong']}  "
+            f"[yellow]weak:[/yellow] {summary['weak']}"
+        )
+        table = Table(title="Password Health", show_lines=True)
+        table.add_column("Account", style="bold cyan")
+        table.add_column("Strength", style="magenta")
+        table.add_column("Entropy", style="green", justify="right")
+        table.add_column("Reasons", style="dim")
+        for item in payload["accounts"]:
+            table.add_row(
+                item["id"],
+                item["strength"],
+                f'{item["entropy_bits"]:.1f}',
+                "; ".join(item["reasons"]) if item["reasons"] else "—",
+            )
+        console.print(table)
+        return
+
+    health_payload = payload["health"]
+    console.print(
+        f"[bold cyan]{payload['id']}[/bold cyan] "
+        f"strength={health_payload['strength']} "
+        f"entropy={health_payload['entropy_bits']:.1f}"
     )
 
 

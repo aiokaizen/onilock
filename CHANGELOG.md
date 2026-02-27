@@ -7,6 +7,7 @@
 - Add per-account tags with `tags add|remove|list` commands and normalized tag handling.
 - Add password version history tracking and `history` command with limits and JSON output.
 - Add `rotate` command to generate/store new account passwords with history integration.
+- Add `health` command for single-account and vault-wide password health reporting.
 
 ## v1.8.0
 - Introduce versioned AEAD vault format (v2, AES-GCM) with automatic legacy migration.
