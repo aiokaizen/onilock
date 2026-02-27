@@ -1341,6 +1341,45 @@ def vault_check() -> dict:
     return {"ok": len(issues) == 0, "issues": issues}
 
 
+def _discover_profile_file_from_vault() -> Optional[Path]:
+    vault_dir = Path(settings.VAULT_DIR)
+    if not vault_dir.exists():
+        return None
+
+    for candidate in vault_dir.glob("*.oni"):
+        try:
+            engine = DatabaseManager(
+                database_url=str(candidate), is_encrypted=True
+            ).get_engine()
+            payload = engine.read() or {}
+            if isinstance(payload, dict) and "master_password" in payload and "accounts" in payload:
+                return candidate
+        except Exception:
+            continue
+    return None
+
+
+def _rebuild_setup_link(profile_path: Path) -> bool:
+    try:
+        db_manager = DatabaseManager(
+            database_url=settings.SETUP_FILEPATH, is_encrypted=True
+        )
+        setup_engine = db_manager.get_engine()
+        setup_data = setup_engine.read() or {}
+        if not isinstance(setup_data, dict):
+            setup_data = {}
+
+        cipher = Fernet(settings.SECRET_KEY.encode())
+        encrypted_filepath = cipher.encrypt(str(profile_path).encode())
+        setup_data[settings.DB_NAME] = {
+            "filepath": base64.b64encode(encrypted_filepath).decode()
+        }
+        setup_engine.write(setup_data)
+        return True
+    except Exception:
+        return False
+
+
 def vault_repair(apply: bool = False) -> dict:
     check = vault_check()
     planned_actions = []
@@ -1350,6 +1389,8 @@ def vault_repair(apply: bool = False) -> dict:
         planned_actions.append("remove_dangling_file_metadata")
     if "malformed_tags" in issue_codes or "malformed_history" in issue_codes:
         planned_actions.append("normalize_account_fields")
+    if "missing_setup_file" in issue_codes:
+        planned_actions.append("rebuild_setup_link_if_recoverable")
 
     report = {
         "applied": apply,
@@ -1364,6 +1405,11 @@ def vault_repair(apply: bool = False) -> dict:
 
     if not apply:
         return report
+
+    if "missing_setup_file" in issue_codes:
+        candidate = _discover_profile_file_from_vault()
+        if candidate and _rebuild_setup_link(candidate):
+            report["fixed"]["rebuilt_setup_link"] = 1
 
     engine = get_profile_engine()
     if not engine:
