@@ -1,6 +1,7 @@
 """Tests for onilock.run (CLI commands via typer.testing.CliRunner)."""
 
 import os
+import json
 import unittest
 from unittest.mock import MagicMock, patch
 from pathlib import Path
@@ -135,6 +136,37 @@ class TestCopyCommand(unittest.TestCase):
         with patch("onilock.run.copy_account_password") as mock_copy:
             result = runner.invoke(app, ["copy", "mygithub"])
         mock_copy.assert_called_once_with("mygithub")
+
+
+class TestSearchCommand(unittest.TestCase):
+    def test_search_calls_search_accounts(self):
+        from onilock.run import app
+
+        with patch("onilock.run.search_accounts", return_value=[]) as mock_search:
+            result = runner.invoke(app, ["search", "github", "--limit", "5"])
+
+        self.assertEqual(result.exit_code, 0)
+        mock_search.assert_called_once_with("github", limit=5)
+
+    def test_search_json_output(self):
+        from onilock.run import app
+
+        payload = [
+            {
+                "rank": 1,
+                "id": "github",
+                "username": "octocat",
+                "url": "https://github.com",
+                "description": "code hosting",
+                "score": 1.0,
+            }
+        ]
+        with patch("onilock.run.search_accounts", return_value=payload):
+            result = runner.invoke(app, ["search", "github", "--json"])
+
+        self.assertEqual(result.exit_code, 0)
+        data = json.loads(result.output)
+        self.assertEqual(data[0]["id"], "github")
 
 
 class TestProfilesCommand(unittest.TestCase):

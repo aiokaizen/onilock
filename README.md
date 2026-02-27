@@ -79,6 +79,14 @@ onilock list
 ```
 Displays all saved accounts.
 
+### 🔹 Search Accounts
+```sh
+onilock search github
+onilock search git --limit 5
+onilock search github --json
+```
+Fuzzy-searches accounts by name, username, URL, description, tags, and notes.
+
 ### 🔹 Copy a Password to Clipboard
 ```sh
 onilock copy <account_name>

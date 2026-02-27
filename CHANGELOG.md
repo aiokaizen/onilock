@@ -1,5 +1,8 @@
 # Version 1
 
+## v1.9.0
+- Add `search` command with fuzzy account matching, result limits, and JSON output.
+
 ## v1.8.0
 - Introduce versioned AEAD vault format (v2, AES-GCM) with automatic legacy migration.
 - Add export/import encryption, audit logging, and backup/restore workflows.

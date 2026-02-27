@@ -30,6 +30,7 @@ from onilock.account_manager import (
     initialize,
     list_accounts,
     list_files,
+    search_accounts,
     remove_account as am_remove_account,
     new_account,
     rotate_secret_key,
@@ -780,6 +781,49 @@ def copy(name: str):
     except ValueError:
         pass
     return copy_account_password(account_id)
+
+
+@app.command(rich_help_panel="Passwords")
+@exception_handler
+def search(
+    query: str,
+    limit: int = typer.Option(10, "--limit", min=1, help="Maximum results."),
+    json_output: bool = typer.Option(
+        False, "--json", help="Print machine-readable JSON output."
+    ),
+):
+    """
+    Fuzzy-search accounts by id, username, URL, description, tags, and notes.
+    """
+    results = search_accounts(query, limit=limit)
+    if json_output:
+        typer.echo(json.dumps(results))
+        return
+
+    if not results:
+        console.print("[bold yellow]![/bold yellow] No accounts matched your query.")
+        return
+
+    from rich.table import Table
+
+    table = Table(title=f"Search Results — '{query}'", show_lines=True)
+    table.add_column("#", style="dim", justify="right")
+    table.add_column("Name", style="bold cyan")
+    table.add_column("Username", style="green")
+    table.add_column("URL", style="blue")
+    table.add_column("Description", style="dim")
+    table.add_column("Score", style="magenta", justify="right")
+
+    for item in results:
+        table.add_row(
+            str(item["rank"]),
+            item["id"],
+            item["username"] or "—",
+            item["url"] or "—",
+            item["description"] or "—",
+            f'{item["score"]:.4f}',
+        )
+    console.print(table)
 
 
 @keys_app.command("list")
