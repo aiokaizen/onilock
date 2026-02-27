@@ -164,6 +164,15 @@ onilock import-secrets --format keepass-xml --path ./keepass-export.xml --replac
 ```
 Imports secrets from CSV or KeePass XML export, with dry-run preview support.
 
+### 🔹 Vault Integrity Check/Repair
+```sh
+onilock vault check
+onilock vault check --json
+onilock vault repair
+onilock vault repair --apply --json
+```
+Checks for recoverable vault metadata issues and supports dry-run or apply repair flow.
+
 ### 🔹 Remove an Account
 ```sh
 onilock remove-account <account_name>

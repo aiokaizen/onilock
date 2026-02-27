@@ -976,6 +976,74 @@ class TestImportSecrets(unittest.TestCase):
         self.assertEqual(payload["created"], 1)
 
 
+class TestVaultCheckRepair(unittest.TestCase):
+    def test_vault_check_detects_issues(self):
+        profile = _make_profile(with_account=True, with_file=True)
+        store = profile.model_dump()
+        store["accounts"][0]["tags"] = "Prod"
+        store["accounts"][0]["history"] = "bad-history"
+        engine = MagicMock()
+        engine.read.return_value = store
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch("onilock.account_manager.get_profile_engine", return_value=engine):
+                with patch("onilock.account_manager.settings") as ms:
+                    ms.SETUP_FILEPATH = str(Path(tmpdir) / "missing_setup.oni")
+                    from onilock.account_manager import vault_check
+
+                    payload = vault_check()
+
+        codes = {issue["code"] for issue in payload["issues"]}
+        self.assertIn("missing_setup_file", codes)
+        self.assertIn("dangling_file_metadata", codes)
+        self.assertIn("malformed_tags", codes)
+        self.assertIn("malformed_history", codes)
+
+    def test_vault_repair_dry_run_and_apply(self):
+        profile = _make_profile(with_account=True, with_file=True)
+        store = profile.model_dump()
+        store["accounts"][0]["tags"] = "Prod"
+        store["accounts"][0]["history"] = "bad-history"
+        engine = MagicMock()
+        engine.read.side_effect = lambda: store
+        engine.write.side_effect = lambda payload: store.update(payload)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch("onilock.account_manager.get_profile_engine", return_value=engine):
+                with patch("onilock.account_manager.settings") as ms:
+                    ms.SETUP_FILEPATH = str(Path(tmpdir) / "missing_setup.oni")
+                    from onilock.account_manager import vault_repair
+
+                    dry_run = vault_repair(apply=False)
+                    applied = vault_repair(apply=True)
+
+        self.assertFalse(dry_run["applied"])
+        self.assertTrue(applied["applied"])
+        self.assertGreaterEqual(applied["fixed"]["removed_dangling_files"], 1)
+        self.assertGreaterEqual(applied["fixed"]["normalized_accounts"], 1)
+
+    def test_vault_repair_idempotency(self):
+        profile = _make_profile(with_account=True, with_file=True)
+        store = profile.model_dump()
+        store["accounts"][0]["tags"] = "Prod"
+        store["accounts"][0]["history"] = "bad-history"
+        engine = MagicMock()
+        engine.read.side_effect = lambda: store
+        engine.write.side_effect = lambda payload: store.update(payload)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch("onilock.account_manager.get_profile_engine", return_value=engine):
+                with patch("onilock.account_manager.settings") as ms:
+                    ms.SETUP_FILEPATH = str(Path(tmpdir) / "missing_setup.oni")
+                    from onilock.account_manager import vault_repair
+
+                    first = vault_repair(apply=True)
+                    second = vault_repair(apply=True)
+
+        self.assertTrue(first["applied"])
+        self.assertEqual(second["fixed"]["removed_dangling_files"], 0)
+        self.assertEqual(second["fixed"]["normalized_accounts"], 0)
+
+
 class TestRemoveAccount(unittest.TestCase):
     def test_remove_valid_account(self):
         profile = _make_profile(with_account=True)
