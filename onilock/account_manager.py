@@ -56,6 +56,8 @@ __all__ = [
     "rotate_account_password",
     "get_account_history",
     "get_password_health_report",
+    "get_accounts_payload",
+    "get_files_payload",
     "unlock_with_pin",
     "reset_profile_pin",
     "require_unlock_if_enabled",
@@ -519,6 +521,7 @@ def new_account(
 def list_accounts():
     """List all available accounts."""
 
+    payload = get_accounts_payload()
     engine = get_profile_engine()
     if not engine:
         info(
@@ -533,7 +536,7 @@ def list_accounts():
         return
     profile = Profile(**data)
 
-    if not profile.accounts:
+    if not payload:
         info(
             f"No accounts found in [bold]{profile.name}[/bold]. "
             "Use [bold]onilock new[/bold] to add one."
@@ -547,23 +550,47 @@ def list_accounts():
     table.add_column("URL", style="blue")
     table.add_column("Created", style="dim")
 
-    for index, account in enumerate(profile.accounts):
-        created_date = datetime.fromtimestamp(account.created_at).strftime("%Y-%m-%d")
+    for item in payload:
         table.add_row(
-            str(index + 1),
-            account.id,
-            account.username or "—",
-            account.url or "—",
-            created_date,
+            str(item["index"]),
+            item["id"],
+            item["username"] or "—",
+            item["url"] or "—",
+            item["created"],
         )
 
     console.print(table)
+
+
+def get_accounts_payload():
+    """Return accounts as JSON-safe payload."""
+    engine = get_profile_engine()
+    if not engine:
+        return []
+    data = engine.read()
+    if not data:
+        return []
+    profile = Profile(**data)
+
+    payload = []
+    for index, account in enumerate(profile.accounts):
+        payload.append(
+            {
+                "index": index + 1,
+                "id": account.id,
+                "username": account.username or "",
+                "url": account.url or "",
+                "created": datetime.fromtimestamp(account.created_at).strftime("%Y-%m-%d"),
+            }
+        )
+    return payload
 
 
 @pre_post_hooks(pre_command, post_command)
 def list_files():
     """List all available files."""
 
+    payload = get_files_payload()
     engine = get_profile_engine()
     if not engine:
         info(
@@ -578,7 +605,7 @@ def list_files():
         return
     profile = Profile(**data)
 
-    if not profile.files:
+    if not payload:
         info(
             f"No files found in [bold]{profile.name}[/bold]. "
             "Use [bold]onilock encrypt-file[/bold] to add one."
@@ -592,17 +619,40 @@ def list_files():
     table.add_column("Host", style="dim")
     table.add_column("Created", style="dim")
 
-    for file in profile.files:
-        created_date = datetime.fromtimestamp(file.created_at).strftime("%Y-%m-%d")
+    for item in payload:
         table.add_row(
-            file.id,
-            Path(file.src).name,
-            file.user,
-            file.host,
-            created_date,
+            item["id"],
+            Path(item["src"]).name,
+            item["user"],
+            item["host"],
+            item["created"],
         )
 
     console.print(table)
+
+
+def get_files_payload():
+    """Return encrypted files as JSON-safe payload."""
+    engine = get_profile_engine()
+    if not engine:
+        return []
+    data = engine.read()
+    if not data:
+        return []
+    profile = Profile(**data)
+
+    payload = []
+    for file in profile.files:
+        payload.append(
+            {
+                "id": file.id,
+                "src": file.src,
+                "user": file.user,
+                "host": file.host,
+                "created": datetime.fromtimestamp(file.created_at).strftime("%Y-%m-%d"),
+            }
+        )
+    return payload
 
 
 def _score_match(query: str, value: str) -> float:

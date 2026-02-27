@@ -29,6 +29,8 @@ from onilock.account_manager import (
     copy_account_password,
     delete_profile,
     get_account_history,
+    get_accounts_payload,
+    get_files_payload,
     get_password_health_report,
     list_account_tags,
     get_profile_engine,
@@ -627,17 +629,29 @@ def _export_vault_impl(
 
 @app.command("list", rich_help_panel="Passwords")
 @exception_handler
-def accounts():
+def accounts(
+    json_output: bool = typer.Option(
+        False, "--json", help="Print machine-readable JSON output."
+    ),
+):
     """List all stored accounts."""
-
+    if json_output:
+        typer.echo(json.dumps(get_accounts_payload()))
+        return
     return list_accounts()
 
 
 @app.command("list-files", rich_help_panel="Files")
 @exception_handler
-def list_all_files():
+def list_all_files(
+    json_output: bool = typer.Option(
+        False, "--json", help="Print machine-readable JSON output."
+    ),
+):
     """List all encrypted files stored in the vault."""
-
+    if json_output:
+        typer.echo(json.dumps(get_files_payload()))
+        return
     return list_files()
 
 
@@ -1301,63 +1315,130 @@ def generate_pwd(
     )
 
 
-@app.command(rich_help_panel="Utilities")
-@exception_handler
-def doctor():
-    """
-    Diagnose environment and configuration issues.
-    """
+def _collect_doctor_payload(verbose: bool = False) -> dict:
     checks = []
 
-    # Vault dir
     checks.append(
-        ("Vault dir writable", os.access(settings.VAULT_DIR, os.W_OK))
+        {
+            "name": "vault_dir_writable",
+            "ok": os.access(settings.VAULT_DIR, os.W_OK),
+            "detail": str(settings.VAULT_DIR) if verbose else "",
+        }
     )
 
-    # GPG home
     if settings.GPG_HOME:
-        checks.append(("GPG home writable", os.access(settings.GPG_HOME, os.W_OK)))
+        checks.append(
+            {
+                "name": "gpg_home_writable",
+                "ok": os.access(settings.GPG_HOME, os.W_OK),
+                "detail": settings.GPG_HOME if verbose else "",
+            }
+        )
     else:
-        checks.append(("GPG home configured", False))
+        checks.append(
+            {
+                "name": "gpg_home_configured",
+                "ok": False,
+                "detail": "" if not verbose else "ONI_GPG_HOME is not configured",
+            }
+        )
 
-    # GPG binary
     try:
         import subprocess
 
-        subprocess.run(["gpg", "--version"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        checks.append(("gpg installed", True))
-    except Exception:
-        checks.append(("gpg installed", False))
+        subprocess.run(
+            ["gpg", "--version"],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        checks.append({"name": "gpg_installed", "ok": True, "detail": ""})
+    except Exception as exc:
+        checks.append(
+            {
+                "name": "gpg_installed",
+                "ok": False,
+                "detail": str(exc) if verbose else "",
+            }
+        )
 
-    # gpg-agent
     try:
         import subprocess
 
-        subprocess.run(["gpgconf", "--launch", "gpg-agent"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        checks.append(("gpg-agent running", True))
-    except Exception:
-        checks.append(("gpg-agent running", False))
+        subprocess.run(
+            ["gpgconf", "--launch", "gpg-agent"],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        checks.append({"name": "gpg_agent_running", "ok": True, "detail": ""})
+    except Exception as exc:
+        checks.append(
+            {
+                "name": "gpg_agent_running",
+                "ok": False,
+                "detail": str(exc) if verbose else "",
+            }
+        )
 
-    # Keyring backend
     try:
         import keyring
 
         keyring.get_password("onilock", "doctor")
-        checks.append(("keyring backend available", True))
-    except Exception:
-        checks.append(("keyring backend available", False))
+        checks.append({"name": "keyring_backend_available", "ok": True, "detail": ""})
+    except Exception as exc:
+        checks.append(
+            {
+                "name": "keyring_backend_available",
+                "ok": False,
+                "detail": str(exc) if verbose else "",
+            }
+        )
 
-    # Clipboard
     try:
         from onilock.core.utils import clipboard_available
 
-        checks.append(("clipboard available", clipboard_available() and settings.CLIPBOARD_ENABLED))
-    except Exception:
-        checks.append(("clipboard available", False))
+        checks.append(
+            {
+                "name": "clipboard_available",
+                "ok": clipboard_available() and settings.CLIPBOARD_ENABLED,
+                "detail": "" if not verbose else f"enabled={settings.CLIPBOARD_ENABLED}",
+            }
+        )
+    except Exception as exc:
+        checks.append(
+            {
+                "name": "clipboard_available",
+                "ok": False,
+                "detail": str(exc) if verbose else "",
+            }
+        )
 
-    for label, ok in checks:
-        status = "[bold green]OK[/bold green]" if ok else "[bold red]FAIL[/bold red]"
-        console.print(f"{status} {label}")
+    return {"ok": all(item["ok"] for item in checks), "checks": checks}
+
+
+@app.command(rich_help_panel="Utilities")
+@exception_handler
+def doctor(
+    verbose: bool = typer.Option(False, "--verbose", help="Include diagnostic details."),
+    json_output: bool = typer.Option(
+        False, "--json", help="Print machine-readable JSON output."
+    ),
+):
+    """
+    Diagnose environment and configuration issues.
+    """
+    payload = _collect_doctor_payload(verbose=verbose)
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+
+    for item in payload["checks"]:
+        status = "[bold green]OK[/bold green]" if item["ok"] else "[bold red]FAIL[/bold red]"
+        line = f"{status} {item['name']}"
+        if verbose and item["detail"]:
+            line += f" ({item['detail']})"
+        console.print(line)
 
 
 @app.command(rich_help_panel="Utilities")

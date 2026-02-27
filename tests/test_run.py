@@ -380,6 +380,41 @@ class TestUnlockCommands(unittest.TestCase):
         mock_show.assert_not_called()
 
 
+class TestShellSafeJsonOutputs(unittest.TestCase):
+    def test_list_json_output(self):
+        from onilock.run import app
+
+        payload = [{"id": "github", "username": "u", "url": "https://github.com"}]
+        with patch("onilock.run.get_accounts_payload", return_value=payload):
+            result = runner.invoke(app, ["list", "--json"])
+        self.assertEqual(result.exit_code, 0)
+        data = json.loads(result.output)
+        self.assertEqual(data[0]["id"], "github")
+
+    def test_list_files_json_output(self):
+        from onilock.run import app
+
+        payload = [{"id": "doc1", "src": "/tmp/doc.txt"}]
+        with patch("onilock.run.get_files_payload", return_value=payload):
+            result = runner.invoke(app, ["list-files", "--json"])
+        self.assertEqual(result.exit_code, 0)
+        data = json.loads(result.output)
+        self.assertEqual(data[0]["id"], "doc1")
+
+    def test_doctor_json_output(self):
+        from onilock.run import app
+
+        payload = {
+            "ok": True,
+            "checks": [{"name": "vault_writable", "ok": True, "detail": ""}],
+        }
+        with patch("onilock.run._collect_doctor_payload", return_value=payload):
+            result = runner.invoke(app, ["doctor", "--json"])
+        self.assertEqual(result.exit_code, 0)
+        data = json.loads(result.output)
+        self.assertTrue(data["ok"])
+
+
 class TestProfilesCommand(unittest.TestCase):
     def test_profiles_remove_force(self):
         from onilock.run import app
