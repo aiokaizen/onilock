@@ -135,8 +135,9 @@ class TestEncryptFileCommand(unittest.TestCase):
     def test_encrypt_file_command(self):
         from onilock.run import app, filemanager
 
-        with patch.object(filemanager, "encrypt") as mock_enc:
-            result = runner.invoke(app, ["encrypt-file", "doc1", "/tmp/test.txt"])
+        with patch("onilock.run.get_profile_engine", return_value=MagicMock()):
+            with patch.object(filemanager, "encrypt") as mock_enc:
+                result = runner.invoke(app, ["encrypt-file", "doc1", "/tmp/test.txt"])
         mock_enc.assert_called_once_with("doc1", "/tmp/test.txt")
 
 
@@ -195,21 +196,41 @@ class TestExportAllFilesCommand(unittest.TestCase):
 
 
 class TestExportVaultCommand(unittest.TestCase):
-    def test_export_vault_echoes_not_implemented(self):
+    def test_export_vault_command(self):
         from onilock.run import app
 
-        result = runner.invoke(app, ["export-vault"])
+        mock_engine = MagicMock()
+        mock_engine.read.return_value = {
+            "name": "test_profile",
+            "master_password": "hashed",
+            "vault_version": "1.8.0",
+            "creation_timestamp": 1.0,
+            "accounts": [],
+            "files": [],
+        }
+        with patch("onilock.run.get_profile_engine", return_value=mock_engine):
+            result = runner.invoke(app, ["export-vault", "--no-passwords"])
         self.assertEqual(result.exit_code, 0)
-        self.assertIn("not implemented", result.output.lower())
+        self.assertIn("exported vault", result.output.lower())
 
 
 class TestExportCommand(unittest.TestCase):
-    def test_export_command_echoes_not_implemented(self):
+    def test_export_command(self):
         from onilock.run import app
 
-        result = runner.invoke(app, ["export"])
+        mock_engine = MagicMock()
+        mock_engine.read.return_value = {
+            "name": "test_profile",
+            "master_password": "hashed",
+            "vault_version": "1.8.0",
+            "creation_timestamp": 1.0,
+            "accounts": [],
+            "files": [],
+        }
+        with patch("onilock.run.get_profile_engine", return_value=mock_engine):
+            result = runner.invoke(app, ["export", "--no-passwords"])
         self.assertEqual(result.exit_code, 0)
-        self.assertIn("not implemented", result.output.lower())
+        self.assertIn("exported vault", result.output.lower())
 
 
 class TestRemoveAccountCommand(unittest.TestCase):

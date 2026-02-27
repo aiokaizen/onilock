@@ -61,9 +61,7 @@ class EncryptionBackendManager:
         return self.backend.list_keys(secret)
 
     def get_key_info(self, key_id: Any, key_id_type: Any, secret: bool = False):
-        if secret:
-            return self.backend.get_key_info(key_id, key_id_type, secret=secret)
-        return self.backend.get_key_info(key_id, key_id_type)
+        return self.backend.get_key_info(key_id, key_id_type, secret=secret)
 
     def delete_key(self, key_id: Any, key_id_type: Any, passphrase: Any):
         return self.backend.delete_key(key_id, key_id_type, passphrase)
@@ -91,19 +89,25 @@ class GPGEncryptionBackend(BaseEncryptionBackend):
         super().__init__(**kwargs)
 
         gpg_home = kwargs.get("gpg_home", settings.GPG_HOME)
+        explicit_gpg_home = kwargs.get("gpg_home", None) is not None
+        is_dev_source = getattr(settings, "IS_DEV_SOURCE", False)
+        if not isinstance(is_dev_source, bool):
+            is_dev_source = False
         if gpg_home:
             try:
                 os.makedirs(gpg_home, exist_ok=True)
                 os.chmod(gpg_home, 0o700)
             except PermissionError:
-                if settings.IS_DEV_SOURCE:
+                if explicit_gpg_home:
+                    raise
+                if is_dev_source:
                     gpg_home = str(Path(settings.VAULT_DIR).parent / ".gnupg")
                     os.makedirs(gpg_home, exist_ok=True)
                     os.chmod(gpg_home, 0o700)
                 else:
                     raise
 
-            if settings.IS_DEV_SOURCE and not os.access(gpg_home, os.W_OK):
+            if is_dev_source and not os.access(gpg_home, os.W_OK):
                 gpg_home = str(Path(settings.VAULT_DIR).parent / ".gnupg")
                 os.makedirs(gpg_home, exist_ok=True)
                 os.chmod(gpg_home, 0o700)
@@ -162,6 +166,10 @@ class GPGEncryptionBackend(BaseEncryptionBackend):
 
         # Secret key listing can lag right after generation on some systems.
         if not self.get_key_info(name, key_id_type=GPGKeyIDType.NAME_REAL, secret=True):
+            if fingerprint in (None, ""):
+                raise RuntimeError(
+                    "PGP key generation did not produce a usable secret key."
+                )
             logger.warning(
                 "Generated key was not immediately visible in secret key list."
             )
