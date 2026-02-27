@@ -5,6 +5,12 @@ from onilock.core.logging_manager import logger
 from onilock.core.utils import naive_utcnow
 
 
+class PasswordVersion(BaseModel):
+    encrypted_password: str = Field(description="Encrypted previous password")
+    created_at: int = Field(description="Version creation date")
+    reason: str = Field(description="Why this version was recorded")
+
+
 # @TODO : Rename to Account
 class Account(BaseModel):
     id: str = Field(description="Password Identification")
@@ -17,6 +23,9 @@ class Account(BaseModel):
         default=None, description="Encrypted account notes (base64 Fernet token)"
     )
     tags: List[str] = Field(default_factory=list, description="Normalized tags")
+    history: List[PasswordVersion] = Field(
+        default_factory=list, description="Encrypted password version history"
+    )
     created_at: int = Field(description="Creation date")
 
 

@@ -570,6 +570,68 @@ class TestAccountTags(unittest.TestCase):
         self.assertEqual(len(payload), 2)
 
 
+class TestAccountHistory(unittest.TestCase):
+    def test_history_append_and_order_newest_first(self):
+        profile = _make_profile(with_account=True)
+        store = profile.model_dump()
+        engine = MagicMock()
+        engine.read.side_effect = lambda: store
+        engine.write.side_effect = lambda payload: store.update(payload)
+
+        with patch("onilock.account_manager.get_profile_engine", return_value=engine):
+            with patch("onilock.account_manager.settings") as ms:
+                ms.SECRET_KEY = TEST_SECRET_KEY
+                ms.ONI_HISTORY_MAX = 20
+                from onilock.account_manager import (
+                    replace_account_password,
+                    get_account_history,
+                )
+
+                replace_account_password("github", "new-password-1", reason="replace")
+                replace_account_password("github", "new-password-2", reason="rotate")
+                payload = get_account_history("github")
+
+        self.assertEqual(payload["id"], "github")
+        self.assertEqual(len(payload["history"]), 2)
+        self.assertEqual(payload["history"][0]["reason"], "rotate")
+        self.assertEqual(payload["history"][1]["reason"], "replace")
+
+    def test_history_cap_truncates_old_entries(self):
+        profile = _make_profile(with_account=True)
+        store = profile.model_dump()
+        engine = MagicMock()
+        engine.read.side_effect = lambda: store
+        engine.write.side_effect = lambda payload: store.update(payload)
+
+        with patch("onilock.account_manager.get_profile_engine", return_value=engine):
+            with patch("onilock.account_manager.settings") as ms:
+                ms.SECRET_KEY = TEST_SECRET_KEY
+                ms.ONI_HISTORY_MAX = 2
+                from onilock.account_manager import (
+                    replace_account_password,
+                    get_account_history,
+                )
+
+                replace_account_password("github", "new-password-1", reason="replace")
+                replace_account_password("github", "new-password-2", reason="rotate")
+                replace_account_password("github", "new-password-3", reason="rotate")
+                payload = get_account_history("github")
+
+        self.assertEqual(len(payload["history"]), 2)
+
+    def test_history_for_account_with_no_versions(self):
+        profile = _make_profile(with_account=True)
+        engine = _make_engine(profile)
+
+        with patch("onilock.account_manager.get_profile_engine", return_value=engine):
+            from onilock.account_manager import get_account_history
+
+            payload = get_account_history("github")
+
+        self.assertEqual(payload["id"], "github")
+        self.assertEqual(payload["history"], [])
+
+
 class TestRemoveAccount(unittest.TestCase):
     def test_remove_valid_account(self):
         profile = _make_profile(with_account=True)

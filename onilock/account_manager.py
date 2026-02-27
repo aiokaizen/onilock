@@ -36,7 +36,7 @@ from onilock.core.utils import (
 )
 from onilock.core.passwords import password_health
 from onilock.db import DatabaseManager
-from onilock.db.models import Profile, Account
+from onilock.db.models import Profile, Account, PasswordVersion
 
 
 __all__ = [
@@ -50,6 +50,8 @@ __all__ = [
     "add_account_tags",
     "remove_account_tags",
     "list_account_tags",
+    "replace_account_password",
+    "get_account_history",
     "search_accounts",
     "remove_account",
     "delete_profile",
@@ -517,6 +519,136 @@ def get_account_secret(id: str | int):
         "username": account.username or "",
         "url": account.url or "",
         "password": decrypted_password,
+    }
+
+
+def _get_history_max() -> int:
+    raw = getattr(settings, "ONI_HISTORY_MAX", 20)
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return 20
+    return value if value >= 1 else 20
+
+
+def replace_account_password(
+    id: str | int,
+    new_password: str,
+    reason: str = "replace",
+):
+    """
+    Replace an account password and keep the previous encrypted value in history.
+    """
+    engine = get_profile_engine()
+    if not engine:
+        error(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+        )
+        exit(1)
+    data = engine.read()
+    if not data:
+        error(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+        )
+        exit(1)
+
+    profile = Profile(**data)
+    account = profile.get_account(id)
+    if not account:
+        error(
+            f"Account [bold]{id}[/bold] not found. "
+            "Run [bold]onilock list[/bold] to see available accounts."
+        )
+        exit(1)
+
+    existing_history = getattr(account, "history", []) or []
+    history = []
+    for entry in existing_history:
+        if isinstance(entry, PasswordVersion):
+            history.append(entry)
+            continue
+        try:
+            history.append(PasswordVersion(**entry))
+        except Exception:
+            continue
+
+    history.append(
+        PasswordVersion(
+            encrypted_password=account.encrypted_password,
+            created_at=int(naive_utcnow().timestamp()),
+            reason=reason,
+        )
+    )
+    max_items = _get_history_max()
+    account.history = history[-max_items:]
+
+    cipher = Fernet(settings.SECRET_KEY.encode())
+    encrypted_password = cipher.encrypt(new_password.encode())
+    account.encrypted_password = base64.b64encode(encrypted_password).decode()
+
+    existing_passwords = []
+    for acct in profile.accounts:
+        if acct.id.lower() == account.id.lower():
+            continue
+        try:
+            encrypted = base64.b64decode(acct.encrypted_password)
+            existing_passwords.append(cipher.decrypt(encrypted).decode())
+        except Exception:
+            continue
+    health = password_health(new_password, existing_passwords)
+    account.is_weak_password = health["strength"] != "strong"
+
+    engine.write(profile.model_dump())
+    audit("account.password.replaced", account=account.id, reason=reason)
+    return {"id": account.id, "history_size": len(account.history), "reason": reason}
+
+
+def get_account_history(id: str | int, limit: int = 10):
+    engine = get_profile_engine()
+    if not engine:
+        error(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+        )
+        exit(1)
+    data = engine.read()
+    if not data:
+        error(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+        )
+        exit(1)
+
+    profile = Profile(**data)
+    account = profile.get_account(id)
+    if not account:
+        error(
+            f"Account [bold]{id}[/bold] not found. "
+            "Run [bold]onilock list[/bold] to see available accounts."
+        )
+        exit(1)
+
+    history_items = []
+    for entry in getattr(account, "history", []) or []:
+        if isinstance(entry, PasswordVersion):
+            history_items.append(entry)
+            continue
+        try:
+            history_items.append(PasswordVersion(**entry))
+        except Exception:
+            continue
+
+    ordered_history = list(enumerate(history_items))
+    ordered_history.sort(key=lambda pair: (pair[1].created_at, pair[0]), reverse=True)
+    cap = max(1, int(limit))
+    return {
+        "id": account.id,
+        "history": [
+            {
+                "index": index + 1,
+                "created_at": item.created_at,
+                "reason": item.reason,
+            }
+            for index, (_, item) in enumerate(ordered_history[:cap])
+        ],
     }
 
 

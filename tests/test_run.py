@@ -262,6 +262,33 @@ class TestTagsCommands(unittest.TestCase):
         self.assertEqual(data["tags"], ["prod", "infra"])
 
 
+class TestHistoryCommands(unittest.TestCase):
+    def test_history_json_output(self):
+        from onilock.run import app
+
+        payload = {
+            "id": "github",
+            "history": [
+                {"index": 1, "created_at": 1700000000, "reason": "rotate"},
+                {"index": 2, "created_at": 1699999999, "reason": "replace"},
+            ],
+        }
+        with patch("onilock.run.get_account_history", return_value=payload):
+            result = runner.invoke(app, ["history", "github", "--json"])
+        self.assertEqual(result.exit_code, 0)
+        data = json.loads(result.output)
+        self.assertEqual(data["id"], "github")
+        self.assertEqual(len(data["history"]), 2)
+
+    def test_history_limit_is_forwarded(self):
+        from onilock.run import app
+
+        with patch("onilock.run.get_account_history", return_value={"id": "github", "history": []}) as mock_history:
+            result = runner.invoke(app, ["history", "github", "--limit", "3"])
+        self.assertEqual(result.exit_code, 0)
+        mock_history.assert_called_once_with("github", limit=3)
+
+
 class TestProfilesCommand(unittest.TestCase):
     def test_profiles_remove_force(self):
         from onilock.run import app

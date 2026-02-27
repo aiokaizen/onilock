@@ -117,6 +117,14 @@ onilock tags list --json
 ```
 Adds, removes, and lists normalized tags per account.
 
+### 🔹 Password History
+```sh
+onilock history github
+onilock history github --limit 5
+onilock history github --json
+```
+Shows stored password version metadata (newest first).
+
 ### 🔹 Remove an Account
 ```sh
 onilock remove-account <account_name>
