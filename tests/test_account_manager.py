@@ -694,6 +694,80 @@ class TestRotateAccountPassword(unittest.TestCase):
         self.assertTrue(payload["is_weak_password"])
 
 
+class TestPasswordHealthReport(unittest.TestCase):
+    def test_single_account_health_report(self):
+        cipher = Fernet(TEST_SECRET_KEY.encode())
+        weak = base64.b64encode(cipher.encrypt(b"1234")).decode()
+        strong = base64.b64encode(cipher.encrypt(b"VeryStrongPass!234")).decode()
+        profile = Profile(
+            name="test_profile",
+            master_password=base64.b64encode(
+                bcrypt.hashpw(TEST_MASTER_PASSWORD.encode(), bcrypt.gensalt())
+            ).decode(),
+            accounts=[
+                Account(
+                    id="github",
+                    encrypted_password=weak,
+                    username="u",
+                    created_at=int(naive_utcnow().timestamp()),
+                ),
+                Account(
+                    id="gitlab",
+                    encrypted_password=strong,
+                    username="u",
+                    created_at=int(naive_utcnow().timestamp()),
+                ),
+            ],
+            files=[],
+        )
+        engine = _make_engine(profile)
+        with patch("onilock.account_manager.get_profile_engine", return_value=engine):
+            with patch("onilock.account_manager.settings") as ms:
+                ms.SECRET_KEY = TEST_SECRET_KEY
+                from onilock.account_manager import get_password_health_report
+
+                payload = get_password_health_report("github")
+
+        self.assertEqual(payload["id"], "github")
+        self.assertIn("strength", payload["health"])
+
+    def test_all_accounts_health_report(self):
+        cipher = Fernet(TEST_SECRET_KEY.encode())
+        weak = base64.b64encode(cipher.encrypt(b"1234")).decode()
+        strong = base64.b64encode(cipher.encrypt(b"VeryStrongPass!234")).decode()
+        profile = Profile(
+            name="test_profile",
+            master_password=base64.b64encode(
+                bcrypt.hashpw(TEST_MASTER_PASSWORD.encode(), bcrypt.gensalt())
+            ).decode(),
+            accounts=[
+                Account(
+                    id="github",
+                    encrypted_password=weak,
+                    username="u",
+                    created_at=int(naive_utcnow().timestamp()),
+                ),
+                Account(
+                    id="gitlab",
+                    encrypted_password=strong,
+                    username="u",
+                    created_at=int(naive_utcnow().timestamp()),
+                ),
+            ],
+            files=[],
+        )
+        engine = _make_engine(profile)
+        with patch("onilock.account_manager.get_profile_engine", return_value=engine):
+            with patch("onilock.account_manager.settings") as ms:
+                ms.SECRET_KEY = TEST_SECRET_KEY
+                from onilock.account_manager import get_password_health_report
+
+                payload = get_password_health_report(all_accounts=True)
+
+        self.assertEqual(payload["summary"]["total"], 2)
+        self.assertEqual(len(payload["accounts"]), 2)
+
+
 class TestRemoveAccount(unittest.TestCase):
     def test_remove_valid_account(self):
         profile = _make_profile(with_account=True)

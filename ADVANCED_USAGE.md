@@ -122,6 +122,22 @@ Notes:
 - Human output prints a summary only, not the raw password.
 - Password health is recalculated after rotation.
 
+## Password Health Reports
+Use `health` to review weak/reused/common passwords and entropy scores.
+
+Examples:
+```sh
+onilock health github
+onilock health --all
+onilock health --all --json
+```
+
+Report details include:
+- strength classification (`strong`, `medium`, `weak`)
+- entropy estimate
+- reuse/common-password flags
+- remediation reasons
+
 ## Master Password Security
 Master password handling includes:
 - Bcrypt KDF with configurable rounds (`ONI_BCRYPT_ROUNDS`)

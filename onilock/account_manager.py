@@ -53,6 +53,7 @@ __all__ = [
     "replace_account_password",
     "rotate_account_password",
     "get_account_history",
+    "get_password_health_report",
     "search_accounts",
     "remove_account",
     "delete_profile",
@@ -672,6 +673,109 @@ def get_account_history(id: str | int, limit: int = 10):
             for index, (_, item) in enumerate(ordered_history[:cap])
         ],
     }
+
+
+def _decrypt_account_password(cipher: Fernet, account: Account) -> Optional[str]:
+    try:
+        encrypted = base64.b64decode(account.encrypted_password)
+        return cipher.decrypt(encrypted).decode()
+    except Exception:
+        return None
+
+
+def get_password_health_report(
+    id: str | int | None = None,
+    all_accounts: bool = False,
+):
+    engine = get_profile_engine()
+    if not engine:
+        error(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+        )
+        exit(1)
+    data = engine.read()
+    if not data:
+        error(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+        )
+        exit(1)
+
+    profile = Profile(**data)
+    cipher = Fernet(settings.SECRET_KEY.encode())
+
+    decrypted: dict[str, str] = {}
+    for account in profile.accounts:
+        password = _decrypt_account_password(cipher, account)
+        if password is not None:
+            decrypted[account.id] = password
+
+    if all_accounts:
+        accounts_payload = []
+        for account in profile.accounts:
+            current = decrypted.get(account.id)
+            if current is None:
+                continue
+            others = [
+                pwd
+                for acc_id, pwd in decrypted.items()
+                if acc_id.lower() != account.id.lower()
+            ]
+            health = password_health(current, others)
+            accounts_payload.append(
+                {
+                    "id": account.id,
+                    "strength": health["strength"],
+                    "reasons": health["reasons"],
+                    "entropy_bits": health["entropy_bits"],
+                    "reused": health["is_reused"],
+                    "is_common": health["is_common"],
+                }
+            )
+
+        accounts_payload.sort(key=lambda item: item["id"].lower())
+        weak_count = sum(1 for item in accounts_payload if item["strength"] != "strong")
+        strong_count = len(accounts_payload) - weak_count
+        return {
+            "summary": {
+                "total": len(accounts_payload),
+                "strong": strong_count,
+                "weak": weak_count,
+            },
+            "accounts": accounts_payload,
+        }
+
+    if id is None:
+        error("Provide an account identifier or pass [bold]--all[/bold].")
+        exit(1)
+
+    account = profile.get_account(id)
+    if not account:
+        error(
+            f"Account [bold]{id}[/bold] not found. "
+            "Run [bold]onilock list[/bold] to see available accounts."
+        )
+        exit(1)
+
+    current = decrypted.get(account.id)
+    if current is None:
+        return {
+            "id": account.id,
+            "health": {
+                "strength": "unknown",
+                "reasons": ["unable to decrypt password"],
+                "entropy_bits": 0.0,
+                "reused": False,
+                "is_common": False,
+            },
+        }
+
+    others = [
+        pwd
+        for acc_id, pwd in decrypted.items()
+        if acc_id.lower() != account.id.lower()
+    ]
+    health = password_health(current, others)
+    return {"id": account.id, "health": health}
 
 
 def set_account_note(id: str | int, note: str):
