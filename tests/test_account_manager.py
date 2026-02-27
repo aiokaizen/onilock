@@ -431,6 +431,48 @@ class TestCopyAccountPassword(unittest.TestCase):
         mock_proc_inst.start.assert_called_once()
 
 
+class TestShowDecryptedSecret(unittest.TestCase):
+    def test_show_valid_account_by_name(self):
+        profile = _make_profile(with_account=True)
+        engine = _make_engine(profile)
+
+        with patch("onilock.account_manager.get_profile_engine", return_value=engine):
+            with patch("onilock.account_manager.settings") as ms:
+                ms.SECRET_KEY = TEST_SECRET_KEY
+                from onilock.account_manager import get_account_secret
+
+                result = get_account_secret("github")
+
+        self.assertEqual(result["id"], "github")
+        self.assertEqual(result["password"], "mypassword")
+
+    def test_show_valid_account_by_index(self):
+        profile = _make_profile(with_account=True)
+        engine = _make_engine(profile)
+
+        with patch("onilock.account_manager.get_profile_engine", return_value=engine):
+            with patch("onilock.account_manager.settings") as ms:
+                ms.SECRET_KEY = TEST_SECRET_KEY
+                from onilock.account_manager import get_account_secret
+
+                result = get_account_secret(0)
+
+        self.assertEqual(result["id"], "github")
+        self.assertEqual(result["password"], "mypassword")
+
+    def test_show_invalid_account_exits(self):
+        profile = _make_profile()
+        engine = _make_engine(profile)
+
+        with patch("onilock.account_manager.get_profile_engine", return_value=engine):
+            with patch("onilock.account_manager.settings") as ms:
+                ms.SECRET_KEY = TEST_SECRET_KEY
+                from onilock.account_manager import get_account_secret
+
+                with self.assertRaises(SystemExit):
+                    get_account_secret("missing")
+
+
 class TestRemoveAccount(unittest.TestCase):
     def test_remove_valid_account(self):
         profile = _make_profile(with_account=True)

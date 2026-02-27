@@ -27,6 +27,7 @@ from onilock.account_manager import (
     copy_account_password,
     delete_profile,
     get_profile_engine,
+    get_account_secret,
     initialize,
     list_accounts,
     list_files,
@@ -824,6 +825,44 @@ def search(
             f'{item["score"]:.4f}',
         )
     console.print(table)
+
+
+@app.command(rich_help_panel="Passwords")
+@exception_handler
+def show(
+    name: str,
+    json_output: bool = typer.Option(
+        False, "--json", help="Print machine-readable JSON output."
+    ),
+):
+    """
+    Print a decrypted account secret.
+    """
+    account_id: str | int = name
+    try:
+        account_id = int(account_id) - 1
+    except ValueError:
+        pass
+
+    payload = get_account_secret(account_id)
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+
+    console.print(
+        Panel(
+            "\n".join(
+                [
+                    f"[dim]Account:[/dim] [bold]{payload['id']}[/bold]",
+                    f"[dim]Username:[/dim] {payload['username'] or '—'}",
+                    f"[dim]URL:[/dim] {payload['url'] or '—'}",
+                    f"[bold red]Password:[/bold red] {payload['password']}",
+                ]
+            ),
+            title="[yellow]Decrypted Secret[/yellow]",
+            border_style="yellow",
+        )
+    )
 
 
 @keys_app.command("list")

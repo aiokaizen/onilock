@@ -43,6 +43,7 @@ __all__ = [
     "initialize",
     "new_account",
     "copy_account_password",
+    "get_account_secret",
     "search_accounts",
     "remove_account",
     "delete_profile",
@@ -474,6 +475,43 @@ def search_accounts(query: str, limit: int = 10):
         {"rank": idx + 1, **item}
         for idx, item in enumerate(results[:cap])
     ]
+
+
+def get_account_secret(id: str | int):
+    """
+    Decrypt and return a single account secret payload.
+    """
+    engine = get_profile_engine()
+    if not engine:
+        error(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+        )
+        exit(1)
+    data = engine.read()
+    if not data:
+        error(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+        )
+        exit(1)
+
+    profile = Profile(**data)
+    account = profile.get_account(id)
+    if not account:
+        error(
+            f"Account [bold]{id}[/bold] not found. "
+            "Run [bold]onilock list[/bold] to see available accounts."
+        )
+        exit(1)
+
+    cipher = Fernet(settings.SECRET_KEY.encode())
+    encrypted_password = base64.b64decode(account.encrypted_password)
+    decrypted_password = cipher.decrypt(encrypted_password).decode()
+    return {
+        "id": account.id,
+        "username": account.username or "",
+        "url": account.url or "",
+        "password": decrypted_password,
+    }
 
 
 @pre_post_hooks(pre_command, post_command)

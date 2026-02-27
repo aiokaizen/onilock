@@ -169,6 +169,41 @@ class TestSearchCommand(unittest.TestCase):
         self.assertEqual(data[0]["id"], "github")
 
 
+class TestShowCommand(unittest.TestCase):
+    def test_show_by_name(self):
+        from onilock.run import app
+
+        payload = {
+            "id": "github",
+            "username": "octocat",
+            "url": "https://github.com",
+            "password": "supersecret",
+        }
+        with patch("onilock.run.get_account_secret", return_value=payload) as mock_show:
+            result = runner.invoke(app, ["show", "github"])
+
+        self.assertEqual(result.exit_code, 0)
+        mock_show.assert_called_once_with("github")
+        self.assertIn("supersecret", result.output)
+
+    def test_show_json_output(self):
+        from onilock.run import app
+
+        payload = {
+            "id": "github",
+            "username": "octocat",
+            "url": "https://github.com",
+            "password": "supersecret",
+        }
+        with patch("onilock.run.get_account_secret", return_value=payload):
+            result = runner.invoke(app, ["show", "github", "--json"])
+
+        self.assertEqual(result.exit_code, 0)
+        data = json.loads(result.output)
+        self.assertEqual(data["id"], "github")
+        self.assertEqual(data["password"], "supersecret")
+
+
 class TestProfilesCommand(unittest.TestCase):
     def test_profiles_remove_force(self):
         from onilock.run import app
