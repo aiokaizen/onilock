@@ -92,6 +92,21 @@ Usage tips:
 - Use short operational tags (`prod`, `staging`, `finance`, `shared`).
 - Pair with fuzzy search (`onilock search prod`) for quick filtering.
 
+## Password History
+OniLock tracks previous encrypted passwords when a password is replaced or rotated.
+History is metadata-only output (timestamp and reason), not plaintext secrets.
+
+Examples:
+```sh
+onilock history github
+onilock history github --limit 5
+onilock history github --json
+```
+
+Defaults:
+- Newest-first display order.
+- Maximum stored history entries per account controlled by `ONI_HISTORY_MAX` (default `20`).
+
 ## Master Password Security
 Master password handling includes:
 - Bcrypt KDF with configurable rounds (`ONI_BCRYPT_ROUNDS`)

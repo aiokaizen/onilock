@@ -28,6 +28,7 @@ from onilock.account_manager import (
     clear_account_note,
     copy_account_password,
     delete_profile,
+    get_account_history,
     list_account_tags,
     get_profile_engine,
     get_account_secret,
@@ -871,6 +872,49 @@ def show(
             border_style="yellow",
         )
     )
+
+
+@app.command(rich_help_panel="Passwords")
+@exception_handler
+def history(
+    name: str,
+    limit: int = typer.Option(10, "--limit", min=1, help="Maximum history entries."),
+    json_output: bool = typer.Option(
+        False, "--json", help="Print machine-readable JSON output."
+    ),
+):
+    """Show password version history for an account."""
+    account_id: str | int = name
+    try:
+        account_id = int(account_id) - 1
+    except ValueError:
+        pass
+
+    payload = get_account_history(account_id, limit=limit)
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+
+    entries = payload["history"]
+    if not entries:
+        console.print(
+            f"[bold yellow]![/bold yellow] No password history for [bold]{payload['id']}[/bold]."
+        )
+        return
+
+    from rich.table import Table
+
+    table = Table(title=f"Password History — {payload['id']}", show_lines=True)
+    table.add_column("#", style="dim", justify="right")
+    table.add_column("When", style="cyan")
+    table.add_column("Reason", style="magenta")
+    for item in entries:
+        table.add_row(
+            str(item["index"]),
+            str(item["created_at"]),
+            item["reason"],
+        )
+    console.print(table)
 
 
 @notes_app.command("set")
