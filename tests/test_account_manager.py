@@ -510,6 +510,66 @@ class TestAccountNotes(unittest.TestCase):
                     get_account_note("missing")
 
 
+class TestAccountTags(unittest.TestCase):
+    def test_add_remove_and_list_tags(self):
+        profile = _make_profile(with_account=True)
+        store = profile.model_dump()
+        engine = MagicMock()
+        engine.read.side_effect = lambda: store
+        engine.write.side_effect = lambda payload: store.update(payload)
+
+        with patch("onilock.account_manager.get_profile_engine", return_value=engine):
+            from onilock.account_manager import (
+                add_account_tags,
+                remove_account_tags,
+                list_account_tags,
+            )
+
+            added = add_account_tags("github", ["Prod", " prod ", "Infra"])
+            listed = list_account_tags("github")
+            removed = remove_account_tags("github", ["prod"])
+            listed_after = list_account_tags("github")
+
+        self.assertEqual(added["tags"], ["infra", "prod"])
+        self.assertEqual(listed["tags"], ["infra", "prod"])
+        self.assertEqual(removed["tags"], ["infra"])
+        self.assertEqual(listed_after["tags"], ["infra"])
+
+    def test_list_all_tags(self):
+        cipher = Fernet(TEST_SECRET_KEY.encode())
+        pw = base64.b64encode(cipher.encrypt(b"x")).decode()
+        profile = Profile(
+            name="test_profile",
+            master_password=base64.b64encode(
+                bcrypt.hashpw(TEST_MASTER_PASSWORD.encode(), bcrypt.gensalt())
+            ).decode(),
+            accounts=[
+                Account(
+                    id="github",
+                    encrypted_password=pw,
+                    username="u",
+                    tags=["dev"],
+                    created_at=int(naive_utcnow().timestamp()),
+                ),
+                Account(
+                    id="gitlab",
+                    encrypted_password=pw,
+                    username="u",
+                    tags=["prod"],
+                    created_at=int(naive_utcnow().timestamp()),
+                ),
+            ],
+            files=[],
+        )
+        engine = _make_engine(profile)
+        with patch("onilock.account_manager.get_profile_engine", return_value=engine):
+            from onilock.account_manager import list_account_tags
+
+            payload = list_account_tags()
+
+        self.assertEqual(len(payload), 2)
+
+
 class TestRemoveAccount(unittest.TestCase):
     def test_remove_valid_account(self):
         profile = _make_profile(with_account=True)

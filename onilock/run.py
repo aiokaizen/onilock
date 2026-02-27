@@ -24,15 +24,18 @@ from onilock.db import DatabaseManager
 from onilock.db.engines import EncryptedJsonEngine
 from onilock.filemanager import FileEncryptionManager, get_output_filename
 from onilock.account_manager import (
+    add_account_tags,
     clear_account_note,
     copy_account_password,
     delete_profile,
+    list_account_tags,
     get_profile_engine,
     get_account_secret,
     get_account_note,
     initialize,
     list_accounts,
     list_files,
+    remove_account_tags,
     search_accounts,
     set_account_note,
     remove_account as am_remove_account,
@@ -57,6 +60,7 @@ app = typer.Typer()
 profiles_app = typer.Typer()
 keys_app = typer.Typer()
 notes_app = typer.Typer()
+tags_app = typer.Typer()
 filemanager = FileEncryptionManager()
 
 
@@ -929,6 +933,65 @@ def notes_clear(account: str):
     )
 
 
+@tags_app.command("add")
+@exception_handler
+def tags_add(account: str, tags: list[str]):
+    """Add one or more tags to an account."""
+    payload = add_account_tags(account, tags)
+    console.print(
+        f"[bold green]✓[/bold green] Tags updated for [bold]{payload['id']}[/bold]: "
+        f"{', '.join(payload['tags']) or '—'}"
+    )
+
+
+@tags_app.command("remove")
+@exception_handler
+def tags_remove(account: str, tags: list[str]):
+    """Remove one or more tags from an account."""
+    payload = remove_account_tags(account, tags)
+    console.print(
+        f"[bold green]✓[/bold green] Tags updated for [bold]{payload['id']}[/bold]: "
+        f"{', '.join(payload['tags']) or '—'}"
+    )
+
+
+@tags_app.command("list")
+@exception_handler
+def tags_list(
+    account: Optional[str] = typer.Argument(
+        None, help="Account name. Omit to list tags for all accounts."
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", help="Print machine-readable JSON output."
+    ),
+):
+    """List tags for one account or all accounts."""
+    payload = list_account_tags(account)
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+
+    if account:
+        tags = payload.get("tags", [])
+        console.print(
+            f"[bold cyan]{payload['id']}[/bold cyan]: {', '.join(tags) if tags else '—'}"
+        )
+        return
+
+    if not payload:
+        console.print("[bold yellow]![/bold yellow] No tags found.")
+        return
+
+    from rich.table import Table
+
+    table = Table(title="Account Tags", show_lines=True)
+    table.add_column("Account", style="bold cyan")
+    table.add_column("Tags", style="green")
+    for item in payload:
+        table.add_row(item["id"], ", ".join(item["tags"]) if item["tags"] else "—")
+    console.print(table)
+
+
 @keys_app.command("list")
 def keys_list():
     """List GPG keys and the active vault secret key id."""
@@ -1204,6 +1267,7 @@ def main():
 app.add_typer(profiles_app, name="profiles", rich_help_panel="Profiles")
 app.add_typer(keys_app, name="keys", rich_help_panel="Keys")
 app.add_typer(notes_app, name="notes", rich_help_panel="Passwords")
+app.add_typer(tags_app, name="tags", rich_help_panel="Passwords")
 
 if __name__ == "__main__":
     app()

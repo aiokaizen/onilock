@@ -16,6 +16,7 @@ class Account(BaseModel):
     notes: Optional[str] = Field(
         default=None, description="Encrypted account notes (base64 Fernet token)"
     )
+    tags: List[str] = Field(default_factory=list, description="Normalized tags")
     created_at: int = Field(description="Creation date")
 
 

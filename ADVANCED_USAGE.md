@@ -77,6 +77,21 @@ onilock notes get github --json
 onilock notes clear github
 ```
 
+## Account Tags
+Tags are normalized to lowercase, trimmed, deduplicated, and sorted.
+
+Examples:
+```sh
+onilock tags add github prod infra "team-a"
+onilock tags remove github infra
+onilock tags list github
+onilock tags list --json
+```
+
+Usage tips:
+- Use short operational tags (`prod`, `staging`, `finance`, `shared`).
+- Pair with fuzzy search (`onilock search prod`) for quick filtering.
+
 ## Master Password Security
 Master password handling includes:
 - Bcrypt KDF with configurable rounds (`ONI_BCRYPT_ROUNDS`)

@@ -4,7 +4,7 @@ import shutil
 import uuid
 import multiprocessing
 import os
-from typing import Optional
+from typing import Optional, Iterable
 import base64
 from difflib import SequenceMatcher
 
@@ -47,6 +47,9 @@ __all__ = [
     "set_account_note",
     "get_account_note",
     "clear_account_note",
+    "add_account_tags",
+    "remove_account_tags",
+    "list_account_tags",
     "search_accounts",
     "remove_account",
     "delete_profile",
@@ -607,6 +610,108 @@ def clear_account_note(id: str | int):
     engine.write(profile.model_dump())
     audit("account.notes.cleared", account=account.id)
     return {"id": account.id, "cleared": True}
+
+
+def _normalize_tags(tags: Iterable[str]) -> list[str]:
+    normalized = {
+        str(tag).strip().lower()
+        for tag in tags
+        if str(tag).strip()
+    }
+    return sorted(normalized)
+
+
+def add_account_tags(id: str | int, tags: list[str]):
+    engine = get_profile_engine()
+    if not engine:
+        error(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+        )
+        exit(1)
+    data = engine.read()
+    if not data:
+        error(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+        )
+        exit(1)
+
+    profile = Profile(**data)
+    account = profile.get_account(id)
+    if not account:
+        error(
+            f"Account [bold]{id}[/bold] not found. "
+            "Run [bold]onilock list[/bold] to see available accounts."
+        )
+        exit(1)
+
+    existing_tags = getattr(account, "tags", []) or []
+    account.tags = _normalize_tags([*existing_tags, *tags])
+    engine.write(profile.model_dump())
+    audit("account.tags.added", account=account.id, tags=account.tags)
+    return {"id": account.id, "tags": account.tags}
+
+
+def remove_account_tags(id: str | int, tags: list[str]):
+    engine = get_profile_engine()
+    if not engine:
+        error(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+        )
+        exit(1)
+    data = engine.read()
+    if not data:
+        error(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+        )
+        exit(1)
+
+    profile = Profile(**data)
+    account = profile.get_account(id)
+    if not account:
+        error(
+            f"Account [bold]{id}[/bold] not found. "
+            "Run [bold]onilock list[/bold] to see available accounts."
+        )
+        exit(1)
+
+    to_remove = set(_normalize_tags(tags))
+    existing_tags = _normalize_tags(getattr(account, "tags", []) or [])
+    account.tags = [tag for tag in existing_tags if tag not in to_remove]
+    engine.write(profile.model_dump())
+    audit("account.tags.removed", account=account.id, tags=list(to_remove))
+    return {"id": account.id, "tags": account.tags}
+
+
+def list_account_tags(id: str | int | None = None):
+    engine = get_profile_engine()
+    if not engine:
+        info(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+        )
+        return [] if id is None else {"id": str(id), "tags": []}
+    data = engine.read()
+    if not data:
+        info(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+        )
+        return [] if id is None else {"id": str(id), "tags": []}
+
+    profile = Profile(**data)
+    if id is None:
+        return [
+            {"id": account.id, "tags": _normalize_tags(getattr(account, "tags", []) or [])}
+            for account in profile.accounts
+            if _normalize_tags(getattr(account, "tags", []) or [])
+        ]
+
+    account = profile.get_account(id)
+    if not account:
+        error(
+            f"Account [bold]{id}[/bold] not found. "
+            "Run [bold]onilock list[/bold] to see available accounts."
+        )
+        exit(1)
+    return {"id": account.id, "tags": _normalize_tags(getattr(account, "tags", []) or [])}
 
 
 @pre_post_hooks(pre_command, post_command)
