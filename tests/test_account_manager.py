@@ -632,6 +632,68 @@ class TestAccountHistory(unittest.TestCase):
         self.assertEqual(payload["history"], [])
 
 
+class TestRotateAccountPassword(unittest.TestCase):
+    def test_rotate_updates_password_and_history(self):
+        profile = _make_profile(with_account=True)
+        store = profile.model_dump()
+        engine = MagicMock()
+        engine.read.side_effect = lambda: store
+        engine.write.side_effect = lambda payload: store.update(payload)
+
+        with patch("onilock.account_manager.get_profile_engine", return_value=engine):
+            with patch("onilock.account_manager.settings") as ms:
+                ms.SECRET_KEY = TEST_SECRET_KEY
+                ms.ONI_HISTORY_MAX = 20
+                with patch(
+                    "onilock.account_manager.generate_random_password",
+                    return_value="RotatedPass!123",
+                ):
+                    from onilock.account_manager import (
+                        rotate_account_password,
+                        get_account_history,
+                    )
+
+                    payload = rotate_account_password(
+                        "github",
+                        length=16,
+                        include_special_chars=True,
+                    )
+                    history = get_account_history("github")
+
+        cipher = Fernet(TEST_SECRET_KEY.encode())
+        encrypted = base64.b64decode(store["accounts"][0]["encrypted_password"])
+        decrypted = cipher.decrypt(encrypted).decode()
+        self.assertEqual(payload["id"], "github")
+        self.assertEqual(decrypted, "RotatedPass!123")
+        self.assertEqual(len(history["history"]), 1)
+        self.assertEqual(history["history"][0]["reason"], "rotate")
+
+    def test_rotate_recomputes_password_health(self):
+        profile = _make_profile(with_account=True)
+        store = profile.model_dump()
+        engine = MagicMock()
+        engine.read.side_effect = lambda: store
+        engine.write.side_effect = lambda payload: store.update(payload)
+
+        with patch("onilock.account_manager.get_profile_engine", return_value=engine):
+            with patch("onilock.account_manager.settings") as ms:
+                ms.SECRET_KEY = TEST_SECRET_KEY
+                ms.ONI_HISTORY_MAX = 20
+                with patch(
+                    "onilock.account_manager.generate_random_password",
+                    return_value="1234",
+                ):
+                    from onilock.account_manager import rotate_account_password
+
+                    payload = rotate_account_password(
+                        "github",
+                        length=4,
+                        include_special_chars=False,
+                    )
+
+        self.assertTrue(payload["is_weak_password"])
+
+
 class TestRemoveAccount(unittest.TestCase):
     def test_remove_valid_account(self):
         profile = _make_profile(with_account=True)

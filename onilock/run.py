@@ -39,6 +39,7 @@ from onilock.account_manager import (
     remove_account_tags,
     search_accounts,
     set_account_note,
+    rotate_account_password,
     remove_account as am_remove_account,
     new_account,
     rotate_secret_key,
@@ -915,6 +916,43 @@ def history(
             item["reason"],
         )
     console.print(table)
+
+
+@app.command(rich_help_panel="Passwords")
+@exception_handler
+def rotate(
+    name: str,
+    len: int = typer.Option(20, "--len", min=4, help="Generated password length."),
+    special_chars: bool = typer.Option(
+        True,
+        "--special-chars/--no-special-chars",
+        help="Include special characters in the generated password.",
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", help="Print machine-readable JSON output."
+    ),
+):
+    """Rotate an account password and keep the previous value in history."""
+    account_id: str | int = name
+    try:
+        account_id = int(account_id) - 1
+    except ValueError:
+        pass
+
+    payload = rotate_account_password(
+        account_id,
+        length=len,
+        include_special_chars=special_chars,
+    )
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+
+    health = "weak" if payload["is_weak_password"] else "strong"
+    console.print(
+        f"[bold green]✓[/bold green] Rotated password for [bold]{payload['id']}[/bold] "
+        f"(history entries: {payload['history_size']}, health: {health})."
+    )
 
 
 @notes_app.command("set")

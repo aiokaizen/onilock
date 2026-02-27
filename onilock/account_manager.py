@@ -51,6 +51,7 @@ __all__ = [
     "remove_account_tags",
     "list_account_tags",
     "replace_account_password",
+    "rotate_account_password",
     "get_account_history",
     "search_accounts",
     "remove_account",
@@ -600,7 +601,28 @@ def replace_account_password(
 
     engine.write(profile.model_dump())
     audit("account.password.replaced", account=account.id, reason=reason)
-    return {"id": account.id, "history_size": len(account.history), "reason": reason}
+    return {
+        "id": account.id,
+        "history_size": len(account.history),
+        "reason": reason,
+        "is_weak_password": account.is_weak_password,
+    }
+
+
+def rotate_account_password(
+    id: str | int,
+    length: int = 20,
+    include_special_chars: bool = True,
+):
+    new_password = generate_random_password(length, include_special_chars)
+    payload = replace_account_password(id, new_password, reason="rotate")
+    return {
+        "id": payload["id"],
+        "rotated": True,
+        "history_size": payload["history_size"],
+        "is_weak_password": payload["is_weak_password"],
+        "length": len(new_password),
+    }
 
 
 def get_account_history(id: str | int, limit: int = 10):

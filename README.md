@@ -125,6 +125,14 @@ onilock history github --json
 ```
 Shows stored password version metadata (newest first).
 
+### 🔹 Rotate Password
+```sh
+onilock rotate github
+onilock rotate github --len 24 --no-special-chars
+onilock rotate github --json
+```
+Generates a new password, stores it, and pushes the previous secret into history.
+
 ### 🔹 Remove an Account
 ```sh
 onilock remove-account <account_name>
