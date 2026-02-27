@@ -148,6 +148,14 @@ onilock pin reset --pin 5678
 ```
 Adds an optional 4-digit PIN gate for sensitive commands. Leave PIN empty in `pin reset` to disable.
 
+### 🔹 Shell-Safe JSON Output
+```sh
+onilock list --json
+onilock list-files --json
+onilock doctor --json
+```
+Use `--json` for scripting and machine-readable output.
+
 ### 🔹 Remove an Account
 ```sh
 onilock remove-account <account_name>

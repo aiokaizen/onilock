@@ -351,6 +351,18 @@ class TestListAccounts(unittest.TestCase):
 
             list_accounts()  # Should not raise
 
+    def test_get_accounts_payload(self):
+        profile = _make_profile(with_account=True)
+        engine = _make_engine(profile)
+
+        with patch("onilock.account_manager.get_profile_engine", return_value=engine):
+            from onilock.account_manager import get_accounts_payload
+
+            payload = get_accounts_payload()
+
+        self.assertEqual(len(payload), 1)
+        self.assertEqual(payload[0]["id"], "github")
+
 
 class TestListFiles(unittest.TestCase):
     def test_list_files_with_files(self):
@@ -379,6 +391,18 @@ class TestListFiles(unittest.TestCase):
             from onilock.account_manager import list_files
 
             list_files()  # Should not raise
+
+    def test_get_files_payload(self):
+        profile = _make_profile(with_file=True)
+        engine = _make_engine(profile)
+
+        with patch("onilock.account_manager.get_profile_engine", return_value=engine):
+            from onilock.account_manager import get_files_payload
+
+            payload = get_files_payload()
+
+        self.assertEqual(len(payload), 1)
+        self.assertEqual(payload[0]["id"], "doc1")
 
 
 class TestCopyAccountPassword(unittest.TestCase):

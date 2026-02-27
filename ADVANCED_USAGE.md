@@ -156,6 +156,25 @@ Session behavior:
 - Session timeout is controlled by `ONI_UNLOCK_TTL_SEC` (default `600` seconds).
 - Sensitive commands require an unlocked session only when PIN is enabled.
 
+## Shell-Safe JSON Outputs
+Core commands support deterministic `--json` output for automation.
+
+Examples:
+```sh
+onilock list --json | jq .
+onilock list-files --json | jq .
+onilock search github --json | jq .
+onilock show github --json | jq .
+onilock history github --json | jq .
+onilock health --all --json | jq .
+onilock doctor --json | jq .
+```
+
+JSON mode rules:
+- No rich markup/table formatting is emitted.
+- Keys are stable and command-specific.
+- Prefer JSON mode for scripts, CI checks, and wrappers.
+
 ## Master Password Security
 Master password handling includes:
 - Bcrypt KDF with configurable rounds (`ONI_BCRYPT_ROUNDS`)
