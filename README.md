@@ -156,6 +156,13 @@ onilock doctor --json
 ```
 Use `--json` for scripting and machine-readable output.
 
+### 🔹 Secure Imports
+```sh
+onilock import-secrets --format csv --path ./secrets.csv --dry-run
+onilock import-secrets --format keepass-xml --path ./keepass-export.xml --replace-existing
+```
+Imports secrets from CSV or KeePass XML export, with dry-run preview support.
+
 ### 🔹 Remove an Account
 ```sh
 onilock remove-account <account_name>

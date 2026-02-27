@@ -175,6 +175,26 @@ JSON mode rules:
 - Keys are stable and command-specific.
 - Prefer JSON mode for scripts, CI checks, and wrappers.
 
+## Secure Imports (CSV + KeePass XML)
+Import secrets from structured files without exposing plaintext in command output.
+
+Supported formats:
+- `csv`
+- `keepass-xml` (XML export, not `.kdbx` binary files)
+
+Examples:
+```sh
+onilock import-secrets --format csv --path ./secrets.csv --dry-run
+onilock import-secrets --format csv --path ./secrets.csv --replace-existing
+onilock import-secrets --format keepass-xml --path ./keepass-export.xml
+onilock import-secrets --format keepass-xml --path ./keepass-export.xml --json
+```
+
+Behavior:
+- Missing `id` or `password` rows are counted as invalid.
+- Existing accounts are skipped unless `--replace-existing` is passed.
+- `--dry-run` validates/parses inputs and reports counts without writing to vault.
+
 ## Master Password Security
 Master password handling includes:
 - Bcrypt KDF with configurable rounds (`ONI_BCRYPT_ROUNDS`)
