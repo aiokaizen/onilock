@@ -497,5 +497,74 @@ class TestDeleteProfile(unittest.TestCase):
                 delete_profile("wrong_password")
 
 
+class TestSearchAccounts(unittest.TestCase):
+    def test_search_exact_and_fuzzy_match(self):
+        cipher = Fernet(TEST_SECRET_KEY.encode())
+        pw = base64.b64encode(cipher.encrypt(b"x")).decode()
+        profile = Profile(
+            name="test_profile",
+            master_password=base64.b64encode(
+                bcrypt.hashpw(TEST_MASTER_PASSWORD.encode(), bcrypt.gensalt())
+            ).decode(),
+            accounts=[
+                Account(
+                    id="github",
+                    encrypted_password=pw,
+                    username="octocat",
+                    url="https://github.com",
+                    description="code hosting",
+                    created_at=int(naive_utcnow().timestamp()),
+                ),
+                Account(
+                    id="gitlab",
+                    encrypted_password=pw,
+                    username="ops",
+                    url="https://gitlab.com",
+                    description="ci",
+                    created_at=int(naive_utcnow().timestamp()),
+                ),
+            ],
+            files=[],
+        )
+        engine = _make_engine(profile)
+
+        with patch("onilock.account_manager.get_profile_engine", return_value=engine):
+            from onilock.account_manager import search_accounts
+
+            exact = search_accounts("github", limit=10)
+            fuzzy = search_accounts("githb", limit=10)
+
+        self.assertEqual(exact[0]["id"], "github")
+        self.assertEqual(fuzzy[0]["id"], "github")
+
+    def test_search_respects_limit(self):
+        cipher = Fernet(TEST_SECRET_KEY.encode())
+        pw = base64.b64encode(cipher.encrypt(b"x")).decode()
+        profile = Profile(
+            name="test_profile",
+            master_password=base64.b64encode(
+                bcrypt.hashpw(TEST_MASTER_PASSWORD.encode(), bcrypt.gensalt())
+            ).decode(),
+            accounts=[
+                Account(
+                    id=f"svc{i}",
+                    encrypted_password=pw,
+                    username="user",
+                    url="https://example.com",
+                    description="service",
+                    created_at=int(naive_utcnow().timestamp()),
+                )
+                for i in range(10)
+            ],
+            files=[],
+        )
+        engine = _make_engine(profile)
+        with patch("onilock.account_manager.get_profile_engine", return_value=engine):
+            from onilock.account_manager import search_accounts
+
+            results = search_accounts("svc", limit=3)
+        self.assertEqual(len(results), 3)
+
+
 if __name__ == "__main__":
     unittest.main()

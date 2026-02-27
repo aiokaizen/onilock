@@ -6,6 +6,7 @@ import multiprocessing
 import os
 from typing import Optional
 import base64
+from difflib import SequenceMatcher
 
 from cryptography.fernet import Fernet
 import pyperclip
@@ -42,6 +43,7 @@ __all__ = [
     "initialize",
     "new_account",
     "copy_account_password",
+    "search_accounts",
     "remove_account",
     "delete_profile",
     "rotate_secret_key",
@@ -400,6 +402,78 @@ def list_files():
         )
 
     console.print(table)
+
+
+def _score_match(query: str, value: str) -> float:
+    if not value:
+        return 0.0
+
+    q = query.lower().strip()
+    text = value.lower().strip()
+    if not q or not text:
+        return 0.0
+
+    score = SequenceMatcher(None, q, text).ratio()
+    if text == q:
+        score += 1.0
+    elif text.startswith(q):
+        score += 0.35
+    elif q in text:
+        score += 0.2
+
+    return score
+
+
+def search_accounts(query: str, limit: int = 10):
+    """
+    Fuzzy search accounts by id, username, url, description, tags and notes.
+    """
+    if not query or not query.strip():
+        return []
+
+    engine = get_profile_engine()
+    if not engine:
+        return []
+    data = engine.read()
+    if not data:
+        return []
+
+    profile = Profile(**data)
+    q = query.strip()
+    results = []
+    for account in profile.accounts:
+        tags = getattr(account, "tags", []) or []
+        tags_str = " ".join(str(t) for t in tags)
+        notes = getattr(account, "notes", "") or ""
+
+        candidates = [
+            account.id or "",
+            account.username or "",
+            account.url or "",
+            account.description or "",
+            tags_str,
+            notes,
+        ]
+        score = max((_score_match(q, value) for value in candidates), default=0.0)
+        if score < 0.45:
+            continue
+
+        results.append(
+            {
+                "id": account.id,
+                "username": account.username or "",
+                "url": account.url or "",
+                "description": account.description or "",
+                "score": round(score, 4),
+            }
+        )
+
+    results.sort(key=lambda item: (-item["score"], item["id"].lower()))
+    cap = max(1, int(limit))
+    return [
+        {"rank": idx + 1, **item}
+        for idx, item in enumerate(results[:cap])
+    ]
 
 
 @pre_post_hooks(pre_command, post_command)

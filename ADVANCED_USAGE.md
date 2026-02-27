@@ -37,6 +37,23 @@ When adding new accounts, OniLock checks for:
 
 Weak passwords are accepted but flagged and reported.
 
+## Account Search
+Use fuzzy search to quickly find accounts by:
+- account id/name
+- username
+- URL
+- description
+- tags and notes (when present)
+
+Examples:
+```sh
+onilock search github
+onilock search prod --limit 10
+onilock search git --json
+```
+
+`--json` is useful for scripts and shell pipelines.
+
 ## Master Password Security
 Master password handling includes:
 - Bcrypt KDF with configurable rounds (`ONI_BCRYPT_ROUNDS`)
@@ -72,6 +89,91 @@ Exports include:
 - `files.json` (metadata)
 - `manifest.json` (checksums)
 - `audit.log` (if present)
+
+## Inspecting Exports and Backups
+OniLock exports are either:
+- Plain ZIP archives (`.zip`)
+- Encrypted JSON payloads (`.onilock-export.json`)
+
+Use the workflow below based on the file type.
+
+### 1) Inspect a plain ZIP export
+List archive contents:
+```sh
+unzip -l path/to/export.zip
+```
+
+Read important files without extracting:
+```sh
+unzip -p path/to/export.zip manifest.json
+unzip -p path/to/export.zip accounts.json
+unzip -p path/to/export.zip files.json
+```
+
+Pretty-print JSON with `jq`:
+```sh
+unzip -p path/to/export.zip manifest.json | jq .
+unzip -p path/to/export.zip accounts.json | jq .
+unzip -p path/to/export.zip files.json | jq .
+```
+
+If `jq` is unavailable, use Python:
+```sh
+python -m json.tool <(unzip -p path/to/export.zip manifest.json)
+```
+
+Extract to an inspection directory:
+```sh
+mkdir -p /tmp/onilock-inspect
+unzip path/to/export.zip -d /tmp/onilock-inspect
+```
+
+### 2) Inspect an encrypted export (`.onilock-export.json`)
+Encrypted exports are not directly human-readable. The recommended workflow is:
+
+1. Create an isolated temporary profile.
+2. Import the encrypted export with the passphrase.
+3. Inspect through OniLock commands.
+4. Delete the temporary profile.
+
+Example:
+```sh
+ONI_DB_NAME=inspect_tmp onilock initialize-vault --master-password "temp-strong-pass"
+ONI_DB_NAME=inspect_tmp onilock import-vault path/to/export.onilock-export.json --passphrase "<export-passphrase>"
+ONI_DB_NAME=inspect_tmp onilock list
+ONI_DB_NAME=inspect_tmp onilock list-files
+```
+
+Inspect specific accounts/files:
+```sh
+ONI_DB_NAME=inspect_tmp onilock copy github
+ONI_DB_NAME=inspect_tmp onilock export-file notes --output /tmp/notes.txt
+```
+
+Cleanup when done:
+```sh
+onilock profiles remove inspect_tmp --force
+```
+
+### 3) Verify archive integrity metadata
+Exports include checksums in `manifest.json`. To compare expected vs actual hashes:
+```sh
+unzip -p path/to/export.zip manifest.json | jq '.checksums'
+```
+
+Check a specific file digest:
+```sh
+unzip -p path/to/export.zip accounts.json | sha256sum
+```
+
+Compare the computed hash with the value in `manifest.json`.
+
+### 4) Safety recommendations for inspection
+- Prefer inspecting in a temporary profile.
+- Do not inspect sensitive exports in shared directories.
+- Remove temporary extracted files after review.
+- Use encrypted exports (`--encrypt`) for long-term storage and transfer.
+- Keep export passphrases separate from vault credentials.
 
 ## Backup / Restore
 Encrypted backups are built-in:
