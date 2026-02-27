@@ -93,6 +93,13 @@ onilock copy <account_name>
 ```
 This copies the password to your clipboard securely.
 
+### 🔹 Show a Decrypted Secret
+```sh
+onilock show github
+onilock show 1 --json
+```
+Prints a decrypted secret intentionally for inspection/scripting.
+
 ### 🔹 Remove an Account
 ```sh
 onilock remove-account <account_name>

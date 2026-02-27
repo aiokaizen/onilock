@@ -54,6 +54,17 @@ onilock search git --json
 
 `--json` is useful for scripts and shell pipelines.
 
+## Decrypted Secret Output
+Use `show` when you explicitly need the decrypted password printed:
+```sh
+onilock show github
+onilock show 1 --json
+```
+
+Security note:
+- `show` prints secrets to terminal/stdout by design.
+- Avoid using it in shared terminals, shell history, or CI logs.
+
 ## Master Password Security
 Master password handling includes:
 - Bcrypt KDF with configurable rounds (`ONI_BCRYPT_ROUNDS`)
