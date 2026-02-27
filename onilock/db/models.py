@@ -42,6 +42,8 @@ class Profile(BaseModel):
     name: str
     master_password: str = Field(description="Hashed Master Password")
     vault_version: str = Field(default="", description="Vault version")
+    pin_hash: Optional[str] = Field(default=None, description="Hashed 4-digit PIN")
+    pin_enabled: bool = Field(default=False, description="Whether PIN gate is enabled")
     creation_timestamp: float = Field(
         default=naive_utcnow().timestamp(), description="Creation time"
     )

@@ -138,6 +138,24 @@ Report details include:
 - reuse/common-password flags
 - remediation reasons
 
+## PIN Unlock Sessions
+OniLock supports an optional profile PIN (4 digits) for sensitive-command gating.
+
+Lifecycle:
+- Set at initialization with `onilock initialize-vault --pin 1234`.
+- Set/change later with `onilock pin reset --pin 1234`.
+- Disable by clearing PIN with `onilock pin reset` and submitting empty input.
+
+Unlock flow:
+```sh
+onilock unlock --pin 1234
+```
+
+Session behavior:
+- Unlock state is cached in `.unlock.json` under OniLock base directory.
+- Session timeout is controlled by `ONI_UNLOCK_TTL_SEC` (default `600` seconds).
+- Sensitive commands require an unlocked session only when PIN is enabled.
+
 ## Master Password Security
 Master password handling includes:
 - Bcrypt KDF with configurable rounds (`ONI_BCRYPT_ROUNDS`)

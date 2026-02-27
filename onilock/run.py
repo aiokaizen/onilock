@@ -38,9 +38,12 @@ from onilock.account_manager import (
     list_accounts,
     list_files,
     remove_account_tags,
+    require_unlock_if_enabled,
+    reset_profile_pin,
     search_accounts,
     set_account_note,
     rotate_account_password,
+    unlock_with_pin,
     remove_account as am_remove_account,
     new_account,
     rotate_secret_key,
@@ -64,6 +67,7 @@ profiles_app = typer.Typer()
 keys_app = typer.Typer()
 notes_app = typer.Typer()
 tags_app = typer.Typer()
+pin_app = typer.Typer()
 filemanager = FileEncryptionManager()
 
 
@@ -109,6 +113,11 @@ def _decrypt_export(payload: bytes, passphrase: str) -> bytes:
 @exception_handler
 def initialize_vault(
     master_password: Optional[str] = None,
+    pin: Optional[str] = typer.Option(
+        None,
+        "--pin",
+        help="Optional 4-digit unlock PIN. Leave empty to disable.",
+    ),
 ):
     """
     Initialize a password manager onilock profile.
@@ -149,7 +158,14 @@ def initialize_vault(
         )
         master_password = typer.prompt("Master password", default="", hide_input=True)
 
-    return initialize(master_password)
+    if pin is None and sys.stdin.isatty():
+        pin = typer.prompt(
+            "Optional 4-digit PIN (leave empty to disable)",
+            default="",
+            hide_input=False,
+        )
+
+    return initialize(master_password, pin=pin)
 
 
 @app.command(rich_help_panel="Passwords")
@@ -169,6 +185,7 @@ def new(
     """
     Add a new account to OniLock.
     """
+    require_unlock_if_enabled()
     return new_account(name, password, username, url, description)
 
 
@@ -182,6 +199,7 @@ def encrypt_file(file_id: str, filename: str):
         file_id (str): Identifier to use when reading or decrypting the file.
         filename (str): Path to the file to encrypt.
     """
+    require_unlock_if_enabled()
     filemanager.encrypt(file_id, filename)
 
 
@@ -194,6 +212,7 @@ def read_file(file_id: str):
     Args:
         file_id (str): File identifier.
     """
+    require_unlock_if_enabled()
     filemanager.read(file_id)
 
 
@@ -206,6 +225,7 @@ def edit_file(file_id: str):
     Args:
         file_id (str): File identifier.
     """
+    require_unlock_if_enabled()
     filemanager.open(file_id)
 
 
@@ -218,6 +238,7 @@ def delete_file(file_id: str):
     Args:
         file_id (str): File identifier.
     """
+    require_unlock_if_enabled()
     typer.confirm(
         f"Delete '{file_id}' from vault? This cannot be undone.",
         abort=True,
@@ -235,6 +256,7 @@ def export_file(file_id: str, output: Optional[str] = None):
         file_id (str): File identifier.
         output (str): Destination path (defaults to current directory).
     """
+    require_unlock_if_enabled()
     filemanager.export(file_id, output)
 
 
@@ -247,6 +269,7 @@ def export_all_files(output: Optional[str] = None):
     Args:
         output (str): Destination zip file path (defaults to current directory).
     """
+    require_unlock_if_enabled()
     filemanager.export(file_path=output)
 
 
@@ -261,6 +284,7 @@ def backup(
     """
     Create an encrypted backup of the vault.
     """
+    require_unlock_if_enabled()
     settings.BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     default_name = (
         settings.BACKUP_DIR
@@ -290,6 +314,7 @@ def restore(
     """
     Restore a vault backup.
     """
+    require_unlock_if_enabled()
     import_vault(path, passwords=True, files=True, verify=True, replace=replace, passphrase=passphrase)
 
 
@@ -314,6 +339,7 @@ def import_vault(
     """
     Import a vault export (zip or encrypted JSON export).
     """
+    require_unlock_if_enabled()
     engine = get_profile_engine()
     if not engine:
         console.print(
@@ -439,6 +465,7 @@ def export_vault(
     """
     Export the entire OniLock vault (accounts + files).
     """
+    require_unlock_if_enabled()
     return _export_vault_impl(
         output=output,
         passwords=passwords,
@@ -456,6 +483,7 @@ def _export_vault_impl(
     passphrase: Optional[str] = None,
 ):
     """Internal implementation for full vault exports."""
+    require_unlock_if_enabled()
     engine = get_profile_engine()
     if not engine:
         console.print(
@@ -787,6 +815,7 @@ def copy(name: str):
 
     NAME can be the account name or its 1-based index from `onilock list`.
     """
+    require_unlock_if_enabled()
     account_id: str | int = name
     try:
         account_id = int(account_id) - 1
@@ -849,6 +878,7 @@ def show(
     """
     Print a decrypted account secret.
     """
+    require_unlock_if_enabled()
     account_id: str | int = name
     try:
         account_id = int(account_id) - 1
@@ -934,6 +964,7 @@ def rotate(
     ),
 ):
     """Rotate an account password and keep the previous value in history."""
+    require_unlock_if_enabled()
     account_id: str | int = name
     try:
         account_id = int(account_id) - 1
@@ -1010,6 +1041,65 @@ def health(
         f"strength={health_payload['strength']} "
         f"entropy={health_payload['entropy_bits']:.1f}"
     )
+
+
+@app.command(rich_help_panel="Passwords")
+@exception_handler
+def unlock(
+    pin: Optional[str] = typer.Option(
+        None,
+        "--pin",
+        help="4-digit PIN. If omitted in TTY mode, you will be prompted.",
+    )
+):
+    """Unlock a PIN-protected profile for a short session."""
+    value = pin
+    if value is None:
+        if not sys.stdin.isatty():
+            console.print(
+                "[bold red]✗[/bold red] PIN is required in non-interactive mode. "
+                "Provide [bold]--pin[/bold]."
+            )
+            raise SystemExit(1)
+        value = typer.prompt("PIN", hide_input=True)
+
+    payload = unlock_with_pin(value)
+    if not payload.get("pin_enabled", True):
+        console.print("[bold yellow]![/bold yellow] PIN is disabled for this profile.")
+        return
+    console.print(
+        f"[bold green]✓[/bold green] Profile unlocked for {payload['ttl_sec']} seconds."
+    )
+
+
+@pin_app.command("reset")
+@exception_handler
+def pin_reset(
+    pin: Optional[str] = typer.Option(
+        None,
+        "--pin",
+        help="4-digit PIN. Pass an empty value to disable PIN.",
+    ),
+):
+    """Set, change, or disable the profile PIN."""
+    value = pin
+    if value is None:
+        if not sys.stdin.isatty():
+            console.print(
+                "[bold red]✗[/bold red] Provide [bold]--pin[/bold] in non-interactive mode."
+            )
+            raise SystemExit(1)
+        value = typer.prompt(
+            "New 4-digit PIN (leave empty to disable)",
+            default="",
+            hide_input=False,
+        )
+
+    payload = reset_profile_pin(value)
+    if payload["pin_enabled"]:
+        console.print("[bold green]✓[/bold green] PIN updated.")
+    else:
+        console.print("[bold green]✓[/bold green] PIN disabled.")
 
 
 @notes_app.command("set")
@@ -1187,6 +1277,7 @@ def remove_account(name: str):
     Args:
         name (str): Account name.
     """
+    require_unlock_if_enabled()
     typer.confirm(f"Remove account '{name}'?", abort=True)
     return am_remove_account(name)
 
@@ -1300,6 +1391,7 @@ def erase_user_data(
         "This will permanently delete ALL accounts, files, and keys. Continue?",
         abort=True,
     )
+    require_unlock_if_enabled()
     return delete_profile(master_password)
 
 
@@ -1387,6 +1479,7 @@ def export(
     Args:
         dist (str): Destination path. Defaults to current directory.
     """
+    require_unlock_if_enabled()
     return _export_vault_impl(
         output=dist,
         passwords=passwords,
@@ -1407,6 +1500,7 @@ app.add_typer(profiles_app, name="profiles", rich_help_panel="Profiles")
 app.add_typer(keys_app, name="keys", rich_help_panel="Keys")
 app.add_typer(notes_app, name="notes", rich_help_panel="Passwords")
 app.add_typer(tags_app, name="tags", rich_help_panel="Passwords")
+app.add_typer(pin_app, name="pin", rich_help_panel="Passwords")
 
 if __name__ == "__main__":
     app()

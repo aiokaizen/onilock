@@ -8,6 +8,7 @@
 - Add password version history tracking and `history` command with limits and JSON output.
 - Add `rotate` command to generate/store new account passwords with history integration.
 - Add `health` command for single-account and vault-wide password health reporting.
+- Add optional 4-digit PIN unlock sessions with `unlock` and `pin reset`, and sensitive-command gating.
 
 ## v1.8.0
 - Introduce versioned AEAD vault format (v2, AES-GCM) with automatic legacy migration.

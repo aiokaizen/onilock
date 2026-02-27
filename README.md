@@ -141,6 +141,13 @@ onilock health --all --json
 ```
 Shows health checks for one account or the full vault.
 
+### 🔹 PIN Unlock Sessions
+```sh
+onilock unlock --pin 1234
+onilock pin reset --pin 5678
+```
+Adds an optional 4-digit PIN gate for sensitive commands. Leave PIN empty in `pin reset` to disable.
+
 ### 🔹 Remove an Account
 ```sh
 onilock remove-account <account_name>

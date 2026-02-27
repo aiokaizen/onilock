@@ -2,8 +2,10 @@
 
 import base64
 import os
+import tempfile
 import unittest
 from unittest.mock import MagicMock, patch, call
+from pathlib import Path
 
 import bcrypt
 from cryptography.fernet import Fernet
@@ -254,6 +256,30 @@ class TestInitialize(unittest.TestCase):
 
                 with self.assertRaises(SystemExit):
                     initialize(TEST_MASTER_PASSWORD)
+
+    def test_initialize_with_pin_persists_pin_fields(self):
+        mock_data_engine = MagicMock()
+        mock_data_engine.read.return_value = {}
+        mock_setup_engine = MagicMock()
+        mock_setup_engine.read.return_value = {}
+        mock_db_manager = MagicMock()
+        mock_db_manager.get_engine.return_value = mock_data_engine
+        mock_db_manager.add_engine.return_value = mock_setup_engine
+
+        with patch(
+            "onilock.account_manager.DatabaseManager", return_value=mock_db_manager
+        ):
+            with patch("onilock.account_manager.settings") as ms:
+                ms.SECRET_KEY = TEST_SECRET_KEY
+                ms.SETUP_FILEPATH = "/tmp/setup_test.oni"
+                ms.DB_NAME = "test_new_profile"
+                from onilock.account_manager import initialize
+
+                initialize(TEST_MASTER_PASSWORD, pin="1234")
+
+        written_profile = mock_data_engine.write.call_args.args[0]
+        self.assertTrue(written_profile["pin_enabled"])
+        self.assertTrue(bool(written_profile["pin_hash"]))
 
 
 class TestNewAccount(unittest.TestCase):
@@ -766,6 +792,65 @@ class TestPasswordHealthReport(unittest.TestCase):
 
         self.assertEqual(payload["summary"]["total"], 2)
         self.assertEqual(len(payload["accounts"]), 2)
+
+
+class TestPinUnlock(unittest.TestCase):
+    def _profile_with_pin(self):
+        profile = _make_profile(with_account=True)
+        hashed = bcrypt.hashpw(b"1234", bcrypt.gensalt())
+        profile.pin_enabled = True
+        profile.pin_hash = base64.b64encode(hashed).decode()
+        return profile
+
+    def test_reset_pin_set_and_disable(self):
+        profile = _make_profile(with_account=True)
+        store = profile.model_dump()
+        engine = MagicMock()
+        engine.read.side_effect = lambda: store
+        engine.write.side_effect = lambda payload: store.update(payload)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            unlock_path = Path(tmpdir) / ".unlock.json"
+            with patch("onilock.account_manager.get_profile_engine", return_value=engine):
+                with patch("onilock.account_manager._unlock_path", return_value=unlock_path):
+                    from onilock.account_manager import reset_profile_pin
+
+                    enabled = reset_profile_pin("1234")
+                    disabled = reset_profile_pin("")
+
+        self.assertTrue(enabled["pin_enabled"])
+        self.assertFalse(disabled["pin_enabled"])
+        self.assertIsNone(store["pin_hash"])
+
+    def test_unlock_and_expiry(self):
+        profile = self._profile_with_pin()
+        engine = _make_engine(profile)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            unlock_path = Path(tmpdir) / ".unlock.json"
+            with patch("onilock.account_manager.get_profile_engine", return_value=engine):
+                with patch("onilock.account_manager._unlock_path", return_value=unlock_path):
+                    with patch("onilock.account_manager.time.time", return_value=1000):
+                        from onilock.account_manager import unlock_with_pin, is_profile_unlocked
+
+                        payload = unlock_with_pin("1234")
+
+                    self.assertTrue(payload["unlocked"])
+                    with patch("onilock.account_manager.time.time", return_value=1001):
+                        self.assertTrue(is_profile_unlocked(profile.name))
+                    with patch("onilock.account_manager.time.time", return_value=2000):
+                        self.assertFalse(is_profile_unlocked(profile.name))
+
+    def test_require_unlock_denies_locked_profile(self):
+        profile = self._profile_with_pin()
+        engine = _make_engine(profile)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            unlock_path = Path(tmpdir) / ".unlock.json"
+            with patch("onilock.account_manager.get_profile_engine", return_value=engine):
+                with patch("onilock.account_manager._unlock_path", return_value=unlock_path):
+                    from onilock.account_manager import require_unlock_if_enabled
+
+                    with self.assertRaises(SystemExit):
+                        require_unlock_if_enabled()
 
 
 class TestRemoveAccount(unittest.TestCase):
