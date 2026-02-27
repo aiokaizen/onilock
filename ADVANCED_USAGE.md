@@ -65,6 +65,18 @@ Security note:
 - `show` prints secrets to terminal/stdout by design.
 - Avoid using it in shared terminals, shell history, or CI logs.
 
+## Account Notes
+Notes are encrypted with the same vault secret key and stored per account.
+
+Examples:
+```sh
+onilock notes set github --text "Use SSO fallback account for emergencies."
+onilock notes set github --file ./note.txt
+onilock notes get github
+onilock notes get github --json
+onilock notes clear github
+```
+
 ## Master Password Security
 Master password handling includes:
 - Bcrypt KDF with configurable rounds (`ONI_BCRYPT_ROUNDS`)
