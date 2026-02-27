@@ -4,6 +4,8 @@ import shutil
 import uuid
 import multiprocessing
 import os
+import json
+import time
 from typing import Optional, Iterable
 import base64
 from difflib import SequenceMatcher
@@ -54,6 +56,10 @@ __all__ = [
     "rotate_account_password",
     "get_account_history",
     "get_password_health_report",
+    "unlock_with_pin",
+    "reset_profile_pin",
+    "require_unlock_if_enabled",
+    "is_profile_unlocked",
     "search_accounts",
     "remove_account",
     "delete_profile",
@@ -67,6 +73,71 @@ def pre_command():
 
 def post_command():
     logger.debug("Starting post-command hook.")
+
+
+def _unlock_path() -> Path:
+    return Path(settings.BASE_DIR) / ".unlock.json"
+
+
+def _load_unlock_cache() -> dict:
+    path = _unlock_path()
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text())
+    except Exception:
+        return {}
+
+
+def _save_unlock_cache(data: dict) -> None:
+    path = _unlock_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2))
+
+
+def _unlock_ttl_sec() -> int:
+    raw = os.environ.get("ONI_UNLOCK_TTL_SEC", "600")
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return 600
+    return value if value > 0 else 600
+
+
+def _validate_pin(pin: str) -> None:
+    if not pin.isdigit() or len(pin) != 4:
+        error("PIN must be exactly 4 digits.")
+        exit(1)
+
+
+def is_profile_unlocked(profile_name: Optional[str] = None) -> bool:
+    profile = profile_name or settings.DB_NAME
+    data = _load_unlock_cache()
+    entry = data.get(profile, {})
+    expires_at = int(entry.get("expires_at", 0))
+    now = int(time.time())
+    if expires_at <= now:
+        if profile in data:
+            del data[profile]
+            _save_unlock_cache(data)
+        return False
+    return True
+
+
+def _set_profile_unlock(profile_name: str, ttl_sec: Optional[int] = None) -> int:
+    ttl = ttl_sec if ttl_sec is not None else _unlock_ttl_sec()
+    expires_at = int(time.time()) + ttl
+    data = _load_unlock_cache()
+    data[profile_name] = {"expires_at": expires_at}
+    _save_unlock_cache(data)
+    return expires_at
+
+
+def _clear_profile_unlock(profile_name: str) -> None:
+    data = _load_unlock_cache()
+    if profile_name in data:
+        del data[profile_name]
+        _save_unlock_cache(data)
 
 
 def verify_master_password(master_password: str):
@@ -173,13 +244,121 @@ def get_profile_engine():
     return db_manager.add_engine("data", config_filepath, is_encrypted=True)
 
 
+def reset_profile_pin(pin: Optional[str]) -> dict:
+    """
+    Set, change, or disable the profile PIN.
+    Pass an empty string to disable PIN-based unlock gating.
+    """
+    engine = get_profile_engine()
+    if not engine:
+        error(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+        )
+        exit(1)
+    data = engine.read()
+    if not data:
+        error(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+        )
+        exit(1)
+
+    profile = Profile(**data)
+    if pin is None or pin == "":
+        profile.pin_enabled = False
+        profile.pin_hash = None
+        _clear_profile_unlock(profile.name)
+        engine.write(profile.model_dump())
+        audit("auth.pin.disabled", profile=profile.name)
+        return {"pin_enabled": False}
+
+    _validate_pin(pin)
+    hashed = bcrypt.hashpw(pin.encode(), bcrypt.gensalt(rounds=_get_bcrypt_rounds()))
+    profile.pin_hash = base64.b64encode(hashed).decode()
+    profile.pin_enabled = True
+    _clear_profile_unlock(profile.name)
+    engine.write(profile.model_dump())
+    audit("auth.pin.set", profile=profile.name)
+    return {"pin_enabled": True}
+
+
+def unlock_with_pin(pin: str) -> dict:
+    """
+    Validate PIN and create a temporary unlocked session.
+    """
+    _validate_pin(pin)
+
+    engine = get_profile_engine()
+    if not engine:
+        error(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+        )
+        exit(1)
+    data = engine.read()
+    if not data:
+        error(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+        )
+        exit(1)
+
+    profile = Profile(**data)
+    if not profile.pin_enabled or not profile.pin_hash:
+        info("PIN unlock is disabled for this profile.")
+        return {"unlocked": True, "pin_enabled": False}
+
+    try:
+        pin_hash = base64.b64decode(profile.pin_hash)
+    except Exception:
+        error("Stored PIN hash is invalid. Reset the PIN with [bold]onilock pin reset[/bold].")
+        exit(1)
+
+    if not bcrypt.checkpw(pin.encode(), pin_hash):
+        audit("auth.pin.failed", profile=profile.name)
+        error("Invalid PIN.")
+        exit(1)
+
+    expires_at = _set_profile_unlock(profile.name)
+    audit("auth.pin.unlocked", profile=profile.name, expires_at=expires_at)
+    return {
+        "unlocked": True,
+        "pin_enabled": True,
+        "expires_at": expires_at,
+        "ttl_sec": _unlock_ttl_sec(),
+    }
+
+
+def require_unlock_if_enabled() -> None:
+    """
+    Enforce unlock gate only when PIN is enabled on the active profile.
+    """
+    engine = get_profile_engine()
+    if not engine:
+        return
+    data = engine.read()
+    if not data:
+        return
+
+    profile = Profile(**data)
+    if not profile.pin_enabled:
+        return
+
+    if is_profile_unlocked(profile.name):
+        return
+
+    error(
+        "Vault is locked. Run [bold]onilock unlock[/bold] (or pass [bold]--pin[/bold]) first."
+    )
+    audit("auth.pin.locked", profile=profile.name)
+    exit(1)
+
+
 @pre_post_hooks(pre_command, post_command)
-def initialize(master_password: Optional[str] = None):
+def initialize(master_password: Optional[str] = None, pin: Optional[str] = None):
     """
     Initialize the password manager with a master password.
 
     Args:
         master_password (Optional[str]): The master password used to secure all the other accounts.
+        pin (Optional[str]): Optional 4-digit unlock PIN.
     """
     logger.debug("Initializing database with a master password.")
 
@@ -220,10 +399,21 @@ def initialize(master_password: Optional[str] = None):
     )
     b64_hashed_master_password = base64.b64encode(hashed_master_password).decode()
 
+    pin_hash = None
+    pin_enabled = False
+    if pin is not None and pin != "":
+        _validate_pin(pin)
+        pin_hash = base64.b64encode(
+            bcrypt.hashpw(pin.encode(), bcrypt.gensalt(rounds=_get_bcrypt_rounds()))
+        ).decode()
+        pin_enabled = True
+
     profile = Profile(
         name=name,
         master_password=b64_hashed_master_password,
         vault_version=get_version(),
+        pin_hash=pin_hash,
+        pin_enabled=pin_enabled,
         accounts=list(),
         files=[],
     )

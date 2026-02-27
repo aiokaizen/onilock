@@ -62,7 +62,7 @@ class TestInitializeVaultCommand(unittest.TestCase):
             result = runner.invoke(
                 app, ["initialize-vault", "--master-password=strongpassword"]
             )
-        mock_init.assert_called_once_with("strongpassword")
+        mock_init.assert_called_once_with("strongpassword", pin=None)
         self.assertIn("Initialization Targets", result.output)
         self.assertIn("Vault directory", result.output)
 
@@ -346,6 +346,38 @@ class TestHealthCommands(unittest.TestCase):
         self.assertEqual(result.exit_code, 0)
         data = json.loads(result.output)
         self.assertEqual(data["summary"]["total"], 2)
+
+
+class TestUnlockCommands(unittest.TestCase):
+    def test_unlock_with_pin_option(self):
+        from onilock.run import app
+
+        with patch(
+            "onilock.run.unlock_with_pin",
+            return_value={"unlocked": True, "pin_enabled": True, "ttl_sec": 600},
+        ) as mock_unlock:
+            result = runner.invoke(app, ["unlock", "--pin", "1234"])
+
+        self.assertEqual(result.exit_code, 0)
+        mock_unlock.assert_called_once_with("1234")
+
+    def test_pin_reset_with_pin_option(self):
+        from onilock.run import app
+
+        with patch("onilock.run.reset_profile_pin", return_value={"pin_enabled": True}) as mock_reset:
+            result = runner.invoke(app, ["pin", "reset", "--pin", "1234"])
+
+        self.assertEqual(result.exit_code, 0)
+        mock_reset.assert_called_once_with("1234")
+
+    def test_show_denied_when_unlock_gate_fails(self):
+        from onilock.run import app
+
+        with patch("onilock.run.require_unlock_if_enabled", side_effect=SystemExit(1)):
+            with patch("onilock.run.get_account_secret") as mock_show:
+                result = runner.invoke(app, ["show", "github"])
+        self.assertNotEqual(result.exit_code, 0)
+        mock_show.assert_not_called()
 
 
 class TestProfilesCommand(unittest.TestCase):
