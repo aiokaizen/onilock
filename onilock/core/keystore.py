@@ -272,6 +272,27 @@ class KeyStoreManager:
             pass
         return {}
 
+    @classmethod
+    def clear_persisted_backend(cls, account_key: str) -> bool:
+        try:
+            if not cls.BACKEND_FILE.exists():
+                return False
+            data = json.loads(cls.BACKEND_FILE.read_text())
+            if not isinstance(data, dict) or account_key not in data:
+                return False
+            data.pop(account_key, None)
+            if data:
+                cls.BACKEND_FILE.write_text(json.dumps(data, indent=2))
+            else:
+                cls.BACKEND_FILE.unlink()
+            return True
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "Unable to clear persisted keystore backend for account '%s'.",
+                account_key,
+            )
+            return False
+
     def clear(self) -> None:
         return self.keystore.clear()
 

@@ -197,6 +197,19 @@ class TestKeyStoreManager(unittest.TestCase):
         mock_keyring.assert_not_called()
         self.assertIsInstance(manager2.keystore, VaultKeyStore)
 
+    def test_clear_persisted_backend_removes_entry(self):
+        self.backend_file.write_text('{"work":"vault","personal":"keyring"}')
+        removed = KeyStoreManager.clear_persisted_backend("work")
+        self.assertTrue(removed)
+        data = self.backend_file.read_text()
+        self.assertIn("personal", data)
+        self.assertNotIn("work", data)
+
+    def test_clear_persisted_backend_missing_returns_false(self):
+        self.backend_file.write_text('{"personal":"keyring"}')
+        removed = KeyStoreManager.clear_persisted_backend("work")
+        self.assertFalse(removed)
+
 
 class TestKeyStoreAbstract(unittest.TestCase):
     """Test that KeyStore._passwords set is shared across instances."""
