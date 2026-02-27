@@ -13,6 +13,9 @@ class Account(BaseModel):
     is_weak_password: bool = Field(default=True, description="Password is weak")
     url: Optional[str] = Field(default=None, description="URL or Service name")
     description: Optional[str] = Field(default=None, description="Description")
+    notes: Optional[str] = Field(
+        default=None, description="Encrypted account notes (base64 Fernet token)"
+    )
     created_at: int = Field(description="Creation date")
 
 

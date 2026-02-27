@@ -204,6 +204,36 @@ class TestShowCommand(unittest.TestCase):
         self.assertEqual(data["password"], "supersecret")
 
 
+class TestNotesCommands(unittest.TestCase):
+    def test_notes_set_with_text(self):
+        from onilock.run import app
+
+        with patch("onilock.run.set_account_note") as mock_set:
+            result = runner.invoke(
+                app, ["notes", "set", "github", "--text", "deployment creds"]
+            )
+        self.assertEqual(result.exit_code, 0)
+        mock_set.assert_called_once_with("github", "deployment creds")
+
+    def test_notes_get_json(self):
+        from onilock.run import app
+
+        payload = {"id": "github", "note": "deployment creds"}
+        with patch("onilock.run.get_account_note", return_value=payload):
+            result = runner.invoke(app, ["notes", "get", "github", "--json"])
+        self.assertEqual(result.exit_code, 0)
+        data = json.loads(result.output)
+        self.assertEqual(data["note"], "deployment creds")
+
+    def test_notes_clear(self):
+        from onilock.run import app
+
+        with patch("onilock.run.clear_account_note") as mock_clear:
+            result = runner.invoke(app, ["notes", "clear", "github"])
+        self.assertEqual(result.exit_code, 0)
+        mock_clear.assert_called_once_with("github")
+
+
 class TestProfilesCommand(unittest.TestCase):
     def test_profiles_remove_force(self):
         from onilock.run import app

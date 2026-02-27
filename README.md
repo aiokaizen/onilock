@@ -100,6 +100,14 @@ onilock show 1 --json
 ```
 Prints a decrypted secret intentionally for inspection/scripting.
 
+### 🔹 Account Notes
+```sh
+onilock notes set github --text "Production deployment credentials"
+onilock notes get github
+onilock notes clear github
+```
+Stores and retrieves encrypted per-account notes.
+
 ### 🔹 Remove an Account
 ```sh
 onilock remove-account <account_name>

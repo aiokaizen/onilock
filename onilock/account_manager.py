@@ -44,6 +44,9 @@ __all__ = [
     "new_account",
     "copy_account_password",
     "get_account_secret",
+    "set_account_note",
+    "get_account_note",
+    "clear_account_note",
     "search_accounts",
     "remove_account",
     "delete_profile",
@@ -512,6 +515,98 @@ def get_account_secret(id: str | int):
         "url": account.url or "",
         "password": decrypted_password,
     }
+
+
+def set_account_note(id: str | int, note: str):
+    engine = get_profile_engine()
+    if not engine:
+        error(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+        )
+        exit(1)
+    data = engine.read()
+    if not data:
+        error(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+        )
+        exit(1)
+
+    profile = Profile(**data)
+    account = profile.get_account(id)
+    if not account:
+        error(
+            f"Account [bold]{id}[/bold] not found. "
+            "Run [bold]onilock list[/bold] to see available accounts."
+        )
+        exit(1)
+
+    cipher = Fernet(settings.SECRET_KEY.encode())
+    encrypted_note = cipher.encrypt(note.encode())
+    account.notes = base64.b64encode(encrypted_note).decode()
+    engine.write(profile.model_dump())
+    audit("account.notes.set", account=account.id)
+    return {"id": account.id, "updated": True}
+
+
+def get_account_note(id: str | int):
+    engine = get_profile_engine()
+    if not engine:
+        error(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+        )
+        exit(1)
+    data = engine.read()
+    if not data:
+        error(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+        )
+        exit(1)
+
+    profile = Profile(**data)
+    account = profile.get_account(id)
+    if not account:
+        error(
+            f"Account [bold]{id}[/bold] not found. "
+            "Run [bold]onilock list[/bold] to see available accounts."
+        )
+        exit(1)
+
+    if not account.notes:
+        return {"id": account.id, "note": ""}
+
+    cipher = Fernet(settings.SECRET_KEY.encode())
+    encrypted_note = base64.b64decode(account.notes)
+    note = cipher.decrypt(encrypted_note).decode()
+    return {"id": account.id, "note": note}
+
+
+def clear_account_note(id: str | int):
+    engine = get_profile_engine()
+    if not engine:
+        error(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+        )
+        exit(1)
+    data = engine.read()
+    if not data:
+        error(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+        )
+        exit(1)
+
+    profile = Profile(**data)
+    account = profile.get_account(id)
+    if not account:
+        error(
+            f"Account [bold]{id}[/bold] not found. "
+            "Run [bold]onilock list[/bold] to see available accounts."
+        )
+        exit(1)
+
+    account.notes = None
+    engine.write(profile.model_dump())
+    audit("account.notes.cleared", account=account.id)
+    return {"id": account.id, "cleared": True}
 
 
 @pre_post_hooks(pre_command, post_command)

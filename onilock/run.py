@@ -24,14 +24,17 @@ from onilock.db import DatabaseManager
 from onilock.db.engines import EncryptedJsonEngine
 from onilock.filemanager import FileEncryptionManager, get_output_filename
 from onilock.account_manager import (
+    clear_account_note,
     copy_account_password,
     delete_profile,
     get_profile_engine,
     get_account_secret,
+    get_account_note,
     initialize,
     list_accounts,
     list_files,
     search_accounts,
+    set_account_note,
     remove_account as am_remove_account,
     new_account,
     rotate_secret_key,
@@ -53,6 +56,7 @@ from cryptography.hazmat.backends import default_backend
 app = typer.Typer()
 profiles_app = typer.Typer()
 keys_app = typer.Typer()
+notes_app = typer.Typer()
 filemanager = FileEncryptionManager()
 
 
@@ -865,6 +869,66 @@ def show(
     )
 
 
+@notes_app.command("set")
+@exception_handler
+def notes_set(
+    account: str,
+    text: Optional[str] = typer.Option(
+        None, "--text", help="Note text content."
+    ),
+    note_file: Optional[str] = typer.Option(
+        None, "--file", help="Path to a file containing note text."
+    ),
+):
+    """Set an encrypted note on an account."""
+    if text and note_file:
+        console.print("[bold red]✗[/bold red] Use either --text or --file, not both.")
+        raise SystemExit(1)
+    if not text and not note_file:
+        console.print("[bold red]✗[/bold red] Provide --text or --file.")
+        raise SystemExit(1)
+
+    note = text
+    if note_file:
+        note = Path(note_file).read_text()
+
+    set_account_note(account, note or "")
+    console.print(f"[bold green]✓[/bold green] Note set for [bold]{account}[/bold].")
+
+
+@notes_app.command("get")
+@exception_handler
+def notes_get(
+    account: str,
+    json_output: bool = typer.Option(
+        False, "--json", help="Print machine-readable JSON output."
+    ),
+):
+    """Get an account note."""
+    payload = get_account_note(account)
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+
+    console.print(
+        Panel(
+            payload["note"] or "",
+            title=f"[cyan]Notes — {payload['id']}[/cyan]",
+            border_style="cyan",
+        )
+    )
+
+
+@notes_app.command("clear")
+@exception_handler
+def notes_clear(account: str):
+    """Clear an account note."""
+    clear_account_note(account)
+    console.print(
+        f"[bold green]✓[/bold green] Note cleared for [bold]{account}[/bold]."
+    )
+
+
 @keys_app.command("list")
 def keys_list():
     """List GPG keys and the active vault secret key id."""
@@ -1139,6 +1203,7 @@ def main():
 
 app.add_typer(profiles_app, name="profiles", rich_help_panel="Profiles")
 app.add_typer(keys_app, name="keys", rich_help_panel="Keys")
+app.add_typer(notes_app, name="notes", rich_help_panel="Passwords")
 
 if __name__ == "__main__":
     app()

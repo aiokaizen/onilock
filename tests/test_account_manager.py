@@ -473,6 +473,43 @@ class TestShowDecryptedSecret(unittest.TestCase):
                     get_account_secret("missing")
 
 
+class TestAccountNotes(unittest.TestCase):
+    def test_set_and_get_and_clear_note(self):
+        profile = _make_profile(with_account=True)
+        store = profile.model_dump()
+        engine = MagicMock()
+        engine.read.side_effect = lambda: store
+        engine.write.side_effect = lambda payload: store.update(payload)
+
+        with patch("onilock.account_manager.get_profile_engine", return_value=engine):
+            with patch("onilock.account_manager.settings") as ms:
+                ms.SECRET_KEY = TEST_SECRET_KEY
+                from onilock.account_manager import (
+                    set_account_note,
+                    get_account_note,
+                    clear_account_note,
+                )
+
+                set_account_note("github", "deployment credentials")
+                note_payload = get_account_note("github")
+                clear_account_note("github")
+
+        self.assertEqual(note_payload["id"], "github")
+        self.assertEqual(note_payload["note"], "deployment credentials")
+        self.assertGreaterEqual(engine.write.call_count, 2)
+
+    def test_get_note_missing_account_exits(self):
+        profile = _make_profile()
+        engine = _make_engine(profile)
+        with patch("onilock.account_manager.get_profile_engine", return_value=engine):
+            with patch("onilock.account_manager.settings") as ms:
+                ms.SECRET_KEY = TEST_SECRET_KEY
+                from onilock.account_manager import get_account_note
+
+                with self.assertRaises(SystemExit):
+                    get_account_note("missing")
+
+
 class TestRemoveAccount(unittest.TestCase):
     def test_remove_valid_account(self):
         profile = _make_profile(with_account=True)
