@@ -36,19 +36,25 @@ class FileEncryptionManager:
 
     def __init__(self, gpg_home: Optional[str] = None) -> None:
         home = gpg_home or settings.GPG_HOME
-        if home and gpg_home is None:
+        explicit_gpg_home = gpg_home is not None
+        is_dev_source = getattr(settings, "IS_DEV_SOURCE", False)
+        if not isinstance(is_dev_source, bool):
+            is_dev_source = False
+        if home:
             try:
                 os.makedirs(home, exist_ok=True)
                 os.chmod(home, 0o700)
             except PermissionError:
-                if settings.IS_DEV_SOURCE:
+                if explicit_gpg_home:
+                    raise
+                if is_dev_source:
                     home = str(Path(settings.VAULT_DIR).parent / ".gnupg")
                     os.makedirs(home, exist_ok=True)
                     os.chmod(home, 0o700)
                 else:
                     raise
 
-            if settings.IS_DEV_SOURCE and not os.access(home, os.W_OK):
+            if is_dev_source and not os.access(home, os.W_OK):
                 home = str(Path(settings.VAULT_DIR).parent / ".gnupg")
                 os.makedirs(home, exist_ok=True)
                 os.chmod(home, 0o700)
@@ -193,17 +199,23 @@ class FileEncryptionManager:
 
         readonly_args = ["-R", "-m"] if readonly else []
 
+        preferred_tmp_dir = (
+            "/dev/shm" if os.access("/dev/shm", os.W_OK) else tempfile.gettempdir()
+        )
         try:
-            tmp = tempfile.NamedTemporaryFile(
-                mode="rb+", delete=False, dir="/dev/shm"
-            )
+            with tempfile.NamedTemporaryFile(
+                mode="rb+", delete=False, dir=preferred_tmp_dir
+            ) as tmp:
+                tmp.write(decrypted_data)
+                tmp.flush()
+                tmp_path = tmp.name
         except (PermissionError, FileNotFoundError):
-            tmp = tempfile.NamedTemporaryFile(mode="rb+", delete=False)
-
-        with tmp:
-            tmp.write(decrypted_data)
-            tmp.flush()
-            tmp_path = tmp.name
+            with tempfile.NamedTemporaryFile(
+                mode="rb+", delete=False, dir=tempfile.gettempdir()
+            ) as tmp:
+                tmp.write(decrypted_data)
+                tmp.flush()
+                tmp_path = tmp.name
 
         try:
             subprocess.run(["vim", "-n", *readonly_args, tmp_path])
