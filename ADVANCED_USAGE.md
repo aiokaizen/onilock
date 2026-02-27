@@ -359,9 +359,15 @@ Events include vault initialization, account changes, exports/imports, and file 
 Validate your environment:
 ```sh
 onilock doctor
+onilock doctor --verbose
+onilock doctor --json
 ```
 
 This checks:
+- Active profile and setup/profile readability
+- Unlock/PIN session state
+- Keystore backend resolution
+- Vault/backup/audit write permissions
 - Vault and GPG paths
 - gpg/gpg-agent availability
 - keyring backend
@@ -394,5 +400,5 @@ On read, v1 data is migrated to v2 when possible.
 
 ### Cross‑Platform Behaviors & Fallbacks
 - Non‑TTY mode requires explicit flags for sensitive prompts.
-- `onilock doctor` checks gpg, gpg-agent, clipboard, and path permissions.
+- `onilock doctor` also reports profile/unlock/keystore state and supports JSON output.
 - Clipboard can be disabled with `ONI_CLIPBOARD=false`.
