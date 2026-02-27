@@ -108,6 +108,15 @@ onilock notes clear github
 ```
 Stores and retrieves encrypted per-account notes.
 
+### 🔹 Account Tags
+```sh
+onilock tags add github prod infra
+onilock tags list github
+onilock tags remove github infra
+onilock tags list --json
+```
+Adds, removes, and lists normalized tags per account.
+
 ### 🔹 Remove an Account
 ```sh
 onilock remove-account <account_name>

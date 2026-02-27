@@ -234,6 +234,34 @@ class TestNotesCommands(unittest.TestCase):
         mock_clear.assert_called_once_with("github")
 
 
+class TestTagsCommands(unittest.TestCase):
+    def test_tags_add(self):
+        from onilock.run import app
+
+        with patch("onilock.run.add_account_tags") as mock_add:
+            result = runner.invoke(app, ["tags", "add", "github", "prod", "infra"])
+        self.assertEqual(result.exit_code, 0)
+        mock_add.assert_called_once_with("github", ["prod", "infra"])
+
+    def test_tags_remove(self):
+        from onilock.run import app
+
+        with patch("onilock.run.remove_account_tags") as mock_remove:
+            result = runner.invoke(app, ["tags", "remove", "github", "prod"])
+        self.assertEqual(result.exit_code, 0)
+        mock_remove.assert_called_once_with("github", ["prod"])
+
+    def test_tags_list_json(self):
+        from onilock.run import app
+
+        payload = {"id": "github", "tags": ["prod", "infra"]}
+        with patch("onilock.run.list_account_tags", return_value=payload):
+            result = runner.invoke(app, ["tags", "list", "github", "--json"])
+        self.assertEqual(result.exit_code, 0)
+        data = json.loads(result.output)
+        self.assertEqual(data["tags"], ["prod", "infra"])
+
+
 class TestProfilesCommand(unittest.TestCase):
     def test_profiles_remove_force(self):
         from onilock.run import app
