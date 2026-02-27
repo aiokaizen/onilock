@@ -12,6 +12,7 @@
 - Add shell-safe `--json` outputs for `list`, `list-files`, and `doctor` (plus existing JSON-capable commands).
 - Add `import-secrets` for secure CSV and KeePass XML imports with `--dry-run` and duplicate handling.
 - Expand `doctor` diagnostics with profile, unlock, keystore, path integrity checks, and verbose output.
+- Add `vault check` and `vault repair` commands with dry-run/apply flows and JSON output.
 
 ## v1.8.0
 - Introduce versioned AEAD vault format (v2, AES-GCM) with automatic legacy migration.

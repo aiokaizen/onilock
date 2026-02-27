@@ -195,6 +195,28 @@ Behavior:
 - Existing accounts are skipped unless `--replace-existing` is passed.
 - `--dry-run` validates/parses inputs and reports counts without writing to vault.
 
+## Vault Check / Repair
+Use integrity commands to detect and repair recoverable metadata issues.
+
+Examples:
+```sh
+onilock vault check
+onilock vault check --json
+onilock vault repair
+onilock vault repair --apply
+onilock vault repair --apply --json
+```
+
+`vault check` detects:
+- missing setup file linkage
+- dangling encrypted file metadata
+- malformed account tags/history structures
+
+`vault repair` behavior:
+- default mode is dry-run (plan only)
+- `--apply` performs mutations
+- repair is idempotent (re-running after a successful repair produces no further changes)
+
 ## Master Password Security
 Master password handling includes:
 - Bcrypt KDF with configurable rounds (`ONI_BCRYPT_ROUNDS`)

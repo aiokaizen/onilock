@@ -62,6 +62,8 @@ __all__ = [
     "get_accounts_payload",
     "get_files_payload",
     "import_secrets",
+    "vault_check",
+    "vault_repair",
     "unlock_with_pin",
     "reset_profile_pin",
     "require_unlock_if_enabled",
@@ -1231,6 +1233,192 @@ def import_secrets(
         )
 
     return summary
+
+
+def _validate_history_entries(raw_history) -> list[dict]:
+    if not isinstance(raw_history, list):
+        return []
+
+    normalized = []
+    for entry in raw_history:
+        if not isinstance(entry, dict):
+            continue
+        encrypted_password = entry.get("encrypted_password")
+        created_at = entry.get("created_at")
+        reason = entry.get("reason")
+        if (
+            isinstance(encrypted_password, str)
+            and isinstance(created_at, int)
+            and reason in {"rotate", "replace"}
+        ):
+            normalized.append(
+                {
+                    "encrypted_password": encrypted_password,
+                    "created_at": created_at,
+                    "reason": reason,
+                }
+            )
+    return normalized
+
+
+def _detect_profile_issues(raw: dict) -> list[dict]:
+    issues = []
+    accounts = raw.get("accounts", [])
+    files = raw.get("files", [])
+
+    if not isinstance(accounts, list):
+        issues.append({"code": "malformed_account_records", "message": "accounts must be a list"})
+        return issues
+
+    for idx, account in enumerate(accounts):
+        if not isinstance(account, dict):
+            issues.append(
+                {
+                    "code": "malformed_account_records",
+                    "message": f"account[{idx}] must be an object",
+                }
+            )
+            continue
+
+        tags = account.get("tags", [])
+        if tags is not None and not isinstance(tags, list):
+            issues.append(
+                {
+                    "code": "malformed_tags",
+                    "message": f"account[{idx}] has invalid tags",
+                }
+            )
+
+        history = account.get("history", [])
+        if history is not None and not isinstance(history, list):
+            issues.append(
+                {
+                    "code": "malformed_history",
+                    "message": f"account[{idx}] has invalid history",
+                }
+            )
+
+    if isinstance(files, list):
+        for idx, file in enumerate(files):
+            if not isinstance(file, dict):
+                continue
+            location = file.get("location")
+            if location and not Path(location).exists():
+                issues.append(
+                    {
+                        "code": "dangling_file_metadata",
+                        "message": f"file[{idx}] points to missing path",
+                        "location": location,
+                    }
+                )
+    return issues
+
+
+def vault_check() -> dict:
+    issues = []
+    setup_path = Path(settings.SETUP_FILEPATH)
+    if not setup_path.exists():
+        issues.append(
+            {
+                "code": "missing_setup_file",
+                "message": f"Setup file is missing: {setup_path}",
+            }
+        )
+
+    engine = get_profile_engine()
+    if engine:
+        try:
+            raw = engine.read() or {}
+            if isinstance(raw, dict):
+                issues.extend(_detect_profile_issues(raw))
+            else:
+                issues.append(
+                    {"code": "malformed_profile_data", "message": "profile data is not a dict"}
+                )
+        except Exception as exc:
+            issues.append({"code": "malformed_profile_data", "message": str(exc)})
+
+    return {"ok": len(issues) == 0, "issues": issues}
+
+
+def vault_repair(apply: bool = False) -> dict:
+    check = vault_check()
+    planned_actions = []
+    issue_codes = {issue["code"] for issue in check["issues"]}
+
+    if "dangling_file_metadata" in issue_codes:
+        planned_actions.append("remove_dangling_file_metadata")
+    if "malformed_tags" in issue_codes or "malformed_history" in issue_codes:
+        planned_actions.append("normalize_account_fields")
+
+    report = {
+        "applied": apply,
+        "issues": check["issues"],
+        "actions": planned_actions,
+        "fixed": {
+            "removed_dangling_files": 0,
+            "normalized_accounts": 0,
+            "rebuilt_setup_link": 0,
+        },
+    }
+
+    if not apply:
+        return report
+
+    engine = get_profile_engine()
+    if not engine:
+        return report
+
+    raw = engine.read() or {}
+    if not isinstance(raw, dict):
+        return report
+
+    files = raw.get("files", [])
+    if isinstance(files, list):
+        new_files = []
+        for file in files:
+            if not isinstance(file, dict):
+                new_files.append(file)
+                continue
+            location = file.get("location")
+            if location and not Path(location).exists():
+                report["fixed"]["removed_dangling_files"] += 1
+                continue
+            new_files.append(file)
+        raw["files"] = new_files
+
+    accounts = raw.get("accounts", [])
+    if isinstance(accounts, list):
+        for account in accounts:
+            if not isinstance(account, dict):
+                continue
+            changed = False
+
+            tags = account.get("tags", [])
+            if not isinstance(tags, list):
+                tags = _split_tags(str(tags))
+                account["tags"] = tags
+                changed = True
+            else:
+                normalized_tags = _normalize_tags([str(tag) for tag in tags])
+                if normalized_tags != tags:
+                    account["tags"] = normalized_tags
+                    changed = True
+
+            history = account.get("history", [])
+            normalized_history = _validate_history_entries(history)
+            if normalized_history != history:
+                account["history"] = normalized_history
+                changed = True
+
+            if changed:
+                report["fixed"]["normalized_accounts"] += 1
+
+    if any(value > 0 for value in report["fixed"].values()):
+        engine.write(raw)
+        audit("vault.repaired", fixed=report["fixed"])
+
+    return report
 
 
 def set_account_note(id: str | int, note: str):

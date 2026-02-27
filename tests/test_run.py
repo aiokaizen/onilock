@@ -502,6 +502,33 @@ class TestDoctorEnhanced(unittest.TestCase):
         self.assertIn("/tmp", result.output)
 
 
+class TestVaultCheckRepairCommands(unittest.TestCase):
+    def test_vault_check_json(self):
+        from onilock.run import app
+
+        payload = {"ok": False, "issues": [{"code": "dangling_file_metadata"}]}
+        with patch("onilock.run.vault_check", return_value=payload):
+            result = runner.invoke(app, ["vault", "check", "--json"])
+        self.assertEqual(result.exit_code, 0)
+        data = json.loads(result.output)
+        self.assertFalse(data["ok"])
+
+    def test_vault_repair_apply_json(self):
+        from onilock.run import app
+
+        payload = {
+            "applied": True,
+            "fixed": {"removed_dangling_files": 1, "normalized_accounts": 1},
+            "issues": [],
+        }
+        with patch("onilock.run.vault_repair", return_value=payload) as mock_repair:
+            result = runner.invoke(app, ["vault", "repair", "--apply", "--json"])
+        self.assertEqual(result.exit_code, 0)
+        data = json.loads(result.output)
+        self.assertTrue(data["applied"])
+        mock_repair.assert_called_once_with(apply=True)
+
+
 class TestProfilesCommand(unittest.TestCase):
     def test_profiles_remove_force(self):
         from onilock.run import app

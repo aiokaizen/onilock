@@ -46,6 +46,8 @@ from onilock.account_manager import (
     reset_profile_pin,
     search_accounts,
     set_account_note,
+    vault_check,
+    vault_repair,
     rotate_account_password,
     unlock_with_pin,
     remove_account as am_remove_account,
@@ -72,6 +74,7 @@ keys_app = typer.Typer()
 notes_app = typer.Typer()
 tags_app = typer.Typer()
 pin_app = typer.Typer()
+vault_app = typer.Typer()
 filemanager = FileEncryptionManager()
 
 
@@ -713,6 +716,64 @@ def profiles_use(name: str):
     console.print(
         f"[bold green]✓[/bold green] Active profile set to [bold]{name}[/bold]. "
         "Restart the command to use it."
+    )
+
+
+@vault_app.command("check")
+@exception_handler
+def vault_check_cmd(
+    json_output: bool = typer.Option(
+        False, "--json", help="Print machine-readable JSON output."
+    ),
+):
+    """Check vault metadata and profile integrity."""
+    payload = vault_check()
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+
+    if payload["ok"]:
+        console.print("[bold green]✓[/bold green] Vault integrity check passed.")
+        return
+
+    console.print("[bold yellow]![/bold yellow] Vault integrity issues detected:")
+    for issue in payload["issues"]:
+        console.print(f"- {issue['code']}: {issue.get('message', '')}")
+
+
+@vault_app.command("repair")
+@exception_handler
+def vault_repair_cmd(
+    apply: bool = typer.Option(
+        False, "--apply", help="Apply repair actions. Omit for dry-run preview."
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", help="Print machine-readable JSON output."
+    ),
+):
+    """Repair recoverable vault metadata issues."""
+    if apply:
+        require_unlock_if_enabled()
+
+    payload = vault_repair(apply=apply)
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+
+    if not apply:
+        console.print(
+            "[bold cyan]Repair Plan[/bold cyan] "
+            f"(actions={len(payload['actions'])}, issues={len(payload['issues'])})"
+        )
+        for action in payload["actions"]:
+            console.print(f"- {action}")
+        return
+
+    console.print(
+        "[bold green]✓[/bold green] Repair completed "
+        f"(removed_dangling_files={payload['fixed']['removed_dangling_files']}, "
+        f"normalized_accounts={payload['fixed']['normalized_accounts']}, "
+        f"rebuilt_setup_link={payload['fixed']['rebuilt_setup_link']})."
     )
 
 
@@ -1706,6 +1767,7 @@ app.add_typer(keys_app, name="keys", rich_help_panel="Keys")
 app.add_typer(notes_app, name="notes", rich_help_panel="Passwords")
 app.add_typer(tags_app, name="tags", rich_help_panel="Passwords")
 app.add_typer(pin_app, name="pin", rich_help_panel="Passwords")
+app.add_typer(vault_app, name="vault", rich_help_panel="Vault")
 
 if __name__ == "__main__":
     app()
