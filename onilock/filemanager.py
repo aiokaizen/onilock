@@ -14,7 +14,9 @@ from onilock.core.constants import SECRET_FILENAME_PREFIX
 from onilock.core.settings import settings
 from onilock.core.logging_manager import logger
 from onilock.core.audit import audit
-from onilock.core.ui import success, error
+from onilock.core.dependencies import VIM, ensure_installed
+from onilock.core.gpg import get_gpg
+from onilock.core.ui import success, error, info
 from onilock.core.utils import getlogin, naive_utcnow
 from onilock.db.engines import Engine
 from onilock.db.models import File, Profile
@@ -30,13 +32,28 @@ def get_output_filename(file_id: str):
 class FileEncryptionManager:
     """This class is responsible for all file operations."""
 
-    gpg: gnupg.GPG
+    _gpg: Optional[gnupg.GPG]
     _profile: Optional[Profile]
     _engine: Optional[Engine]
 
     def __init__(self, gpg_home: Optional[str] = None) -> None:
-        home = gpg_home or settings.GPG_HOME
-        explicit_gpg_home = gpg_home is not None
+        self._gpg_home = gpg_home
+        self._gpg = None
+        self._key_ready = False
+        self._engine = None
+        self._profile = None
+
+    @property
+    def gpg(self) -> gnupg.GPG:
+        """
+        GPG client, created on first use so that commands which don't touch
+        encrypted files work without gpg installed.
+        """
+        if self._gpg is not None:
+            return self._gpg
+
+        home = self._gpg_home or settings.GPG_HOME
+        explicit_gpg_home = self._gpg_home is not None
         is_dev_source = getattr(settings, "IS_DEV_SOURCE", False)
         if not isinstance(is_dev_source, bool):
             is_dev_source = False
@@ -58,9 +75,37 @@ class FileEncryptionManager:
                 home = str(Path(settings.VAULT_DIR).parent / ".gnupg")
                 os.makedirs(home, exist_ok=True)
                 os.chmod(home, 0o700)
-        self.gpg = gnupg.GPG(gnupghome=home)
-        self._engine = None
-        self._profile = None
+        self._gpg = get_gpg(home)
+        return self._gpg
+
+    def _ensure_key(self) -> None:
+        """Generate the PGP key used for file encryption if it doesn't exist yet."""
+        if self._key_ready:
+            return
+
+        name = settings.PGP_REAL_NAME
+        keys = self.gpg.list_keys(secret=True)
+        if not any(
+            name == uid.split(" ")[0] for key in keys for uid in key.get("uids", [])
+        ):
+            info("Generating a PGP key for file encryption. This only happens once.")
+            input_data = self.gpg.gen_key_input(
+                key_type="RSA",
+                key_length=4096,
+                name_real=name,
+                name_email=settings.PGP_EMAIL,
+                passphrase=settings.PASSPHRASE,
+            )
+            key = self.gpg.gen_key(input_data)
+            if not getattr(key, "fingerprint", None):
+                stderr = getattr(key, "stderr", None)
+                details = stderr.strip() if stderr else "Unknown GPG error."
+                raise RuntimeError(
+                    f"Failed to generate a PGP key for file encryption. Details: {details}"
+                )
+            audit("keys.gpg.generated", name=name)
+
+        self._key_ready = True
 
     @property
     def profile(self) -> Profile:
@@ -102,6 +147,7 @@ class FileEncryptionManager:
         )
         output_filepath.parent.mkdir(parents=True, exist_ok=True)
 
+        self._ensure_key()
         encrypted_data = self.gpg.encrypt(
             data,
             recipients=[settings.PGP_REAL_NAME],
@@ -193,6 +239,10 @@ class FileEncryptionManager:
                 f"File [bold]{file_id}[/bold] not found. "
                 "Run [bold]onilock list-files[/bold] to see available files."
             )
+            exit(1)
+
+        if not ensure_installed([VIM]):
+            error("vim is required to view or edit encrypted files.")
             exit(1)
 
         decrypted_data = self.decrypt(file_id)

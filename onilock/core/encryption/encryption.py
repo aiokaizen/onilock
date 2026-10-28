@@ -1,12 +1,12 @@
 from typing import Any, Dict, Optional
 import os
 from pathlib import Path
-import gnupg
 
 from onilock.core.settings import settings
 from onilock.core.logging_manager import logger
 from onilock.core.enums import GPGKeyIDType
 from onilock.core.exceptions.exceptions import EncryptionKeyNotFoundError
+from onilock.core.gpg import get_gpg
 
 
 class BaseEncryptionBackend:
@@ -112,8 +112,8 @@ class GPGEncryptionBackend(BaseEncryptionBackend):
                 os.makedirs(gpg_home, exist_ok=True)
                 os.chmod(gpg_home, 0o700)
 
-        self.gpg = gnupg.GPG(
-            gnupghome=gpg_home,
+        self.gpg = get_gpg(
+            gpg_home,
             options=["--pinentry-mode", "loopback"],
         )
 

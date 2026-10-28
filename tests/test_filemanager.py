@@ -8,7 +8,11 @@ from unittest.mock import MagicMock, patch, mock_open
 
 from onilock.filemanager import FileEncryptionManager, get_output_filename
 from onilock.db.models import File, Profile
+from onilock.core.exceptions.exceptions import GPGNotAvailableError
 from onilock.core.utils import naive_utcnow
+
+# Secret key whose name matches the PGP_REAL_NAME the tests patch in.
+_EXISTING_KEY = [{"uids": ["test_key <pgp@onilock.com>"]}]
 
 
 def _make_profile(with_file=False):
@@ -50,23 +54,44 @@ class TestGetOutputFilename(unittest.TestCase):
 
 
 class TestFileEncryptionManagerInit(unittest.TestCase):
-    def test_init_creates_gpg_instance(self):
+    def test_init_does_not_start_gpg(self):
+        with patch("onilock.filemanager.gnupg.GPG") as MockGPG:
+            manager = FileEncryptionManager()
+
+        MockGPG.assert_not_called()
+        self.assertIsNone(manager._engine)
+        self.assertIsNone(manager._profile)
+
+    def test_gpg_created_once_on_first_use(self):
         with patch("onilock.filemanager.gnupg.GPG") as MockGPG:
             MockGPG.return_value = MagicMock()
             with patch("onilock.filemanager.settings") as ms:
                 ms.GPG_HOME = "/tmp/gpg"
                 manager = FileEncryptionManager()
+                g1 = manager.gpg
+                g2 = manager.gpg
 
         MockGPG.assert_called_once()
-        self.assertIsNone(manager._engine)
-        self.assertIsNone(manager._profile)
+        self.assertIs(g1, g2)
 
-    def test_init_with_gpg_home(self):
+    def test_gpg_with_gpg_home(self):
         with patch("onilock.filemanager.gnupg.GPG") as MockGPG:
             MockGPG.return_value = MagicMock()
             manager = FileEncryptionManager(gpg_home="/tmp/custom/gpg")
+            _ = manager.gpg
 
         MockGPG.assert_called_once_with(gnupghome="/tmp/custom/gpg")
+
+    def test_gpg_missing_and_not_installed_raises(self):
+        with patch(
+            "onilock.filemanager.gnupg.GPG", side_effect=OSError("Unable to run gpg")
+        ):
+            with patch("onilock.core.gpg.GNUPG") as mock_dep:
+                mock_dep.is_installed.return_value = False
+                with patch("onilock.core.gpg.ensure_installed", return_value=False):
+                    manager = FileEncryptionManager(gpg_home="/tmp/custom/gpg")
+                    with self.assertRaises(GPGNotAvailableError):
+                        _ = manager.gpg
 
 
 class TestFileEncryptionManagerProperties(unittest.TestCase):
@@ -121,17 +146,14 @@ class TestFileEncryptionManagerProperties(unittest.TestCase):
 
 class TestEncryptBytes(unittest.TestCase):
     def _make_manager(self):
-        with patch("onilock.filemanager.gnupg.GPG") as MockGPG:
-            mock_gpg = MagicMock()
-            mock_encrypted = MagicMock()
-            mock_encrypted.ok = True
-            mock_encrypted.data = b"encrypted_content"
-            mock_gpg.encrypt.return_value = mock_encrypted
-            MockGPG.return_value = mock_gpg
-            with patch("onilock.filemanager.settings") as ms:
-                ms.GPG_HOME = "/tmp/gpg"
-                ms.PGP_REAL_NAME = "test_key"
-                manager = FileEncryptionManager()
+        mock_gpg = MagicMock()
+        mock_gpg.list_keys.return_value = _EXISTING_KEY
+        mock_encrypted = MagicMock()
+        mock_encrypted.ok = True
+        mock_encrypted.data = b"encrypted_content"
+        mock_gpg.encrypt.return_value = mock_encrypted
+        manager = FileEncryptionManager()
+        manager._gpg = mock_gpg
         return manager, mock_gpg
 
     def test_encrypt_bytes_writes_to_file(self, tmp_path=None):
@@ -157,19 +179,80 @@ class TestEncryptBytes(unittest.TestCase):
         mock_gpg.encrypt.assert_called_once()
 
 
+class TestEnsureKey(unittest.TestCase):
+    def _make_manager(self, keys, gen_key_result=None):
+        mock_gpg = MagicMock()
+        mock_gpg.list_keys.return_value = keys
+        mock_gpg.gen_key_input.return_value = "key_input"
+        mock_gpg.gen_key.return_value = gen_key_result or MagicMock(
+            fingerprint="ABCDEF1234567890"
+        )
+        mock_gpg.encrypt.return_value = MagicMock(ok=True, data=b"encrypted")
+        manager = FileEncryptionManager()
+        manager._gpg = mock_gpg
+        return manager, mock_gpg
+
+    def _encrypt(self, manager, out_file):
+        with patch("onilock.filemanager.settings") as ms:
+            ms.PGP_REAL_NAME = "test_key"
+            ms.PGP_EMAIL = "pgp@onilock.com"
+            ms.PASSPHRASE = "test"
+            with patch("onilock.filemanager.audit"):
+                manager.encrypt_bytes(b"plaintext", out_file)
+
+    def test_generates_key_when_missing(self):
+        manager, mock_gpg = self._make_manager(keys=[])
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._encrypt(manager, Path(tmpdir) / "encrypted.oni")
+
+        mock_gpg.gen_key_input.assert_called_once_with(
+            key_type="RSA",
+            key_length=4096,
+            name_real="test_key",
+            name_email="pgp@onilock.com",
+            passphrase="test",
+        )
+        mock_gpg.gen_key.assert_called_once_with("key_input")
+        mock_gpg.encrypt.assert_called_once()
+
+    def test_existing_key_is_reused(self):
+        manager, mock_gpg = self._make_manager(keys=_EXISTING_KEY)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._encrypt(manager, Path(tmpdir) / "encrypted.oni")
+
+        mock_gpg.gen_key.assert_not_called()
+        mock_gpg.encrypt.assert_called_once()
+
+    def test_key_checked_once_per_manager(self):
+        manager, mock_gpg = self._make_manager(keys=_EXISTING_KEY)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._encrypt(manager, Path(tmpdir) / "a.oni")
+            self._encrypt(manager, Path(tmpdir) / "b.oni")
+
+        mock_gpg.list_keys.assert_called_once_with(secret=True)
+        self.assertEqual(mock_gpg.encrypt.call_count, 2)
+
+    def test_generation_failure_raises_before_encrypting(self):
+        failed = MagicMock(fingerprint="", stderr="gpg-agent is not available\n")
+        manager, mock_gpg = self._make_manager(keys=[], gen_key_result=failed)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with self.assertRaises(RuntimeError) as ctx:
+                self._encrypt(manager, Path(tmpdir) / "encrypted.oni")
+
+        self.assertIn("gpg-agent is not available", str(ctx.exception))
+        mock_gpg.encrypt.assert_not_called()
+
+
 class TestEncrypt(unittest.TestCase):
     def _make_manager_with_mock_gpg(self):
-        with patch("onilock.filemanager.gnupg.GPG") as MockGPG:
-            mock_gpg = MagicMock()
-            mock_result = MagicMock()
-            mock_result.ok = True
-            mock_result.data = b"encrypted"
-            mock_gpg.encrypt.return_value = mock_result
-            MockGPG.return_value = mock_gpg
-            with patch("onilock.filemanager.settings") as ms:
-                ms.GPG_HOME = "/tmp/gpg"
-                ms.PGP_REAL_NAME = "test_key"
-                manager = FileEncryptionManager()
+        mock_gpg = MagicMock()
+        mock_gpg.list_keys.return_value = _EXISTING_KEY
+        mock_result = MagicMock()
+        mock_result.ok = True
+        mock_result.data = b"encrypted"
+        mock_gpg.encrypt.return_value = mock_result
+        manager = FileEncryptionManager()
+        manager._gpg = mock_gpg
         return manager
 
     def test_encrypt_file_not_found_exits(self):
@@ -262,17 +345,14 @@ class TestEncrypt(unittest.TestCase):
 
 class TestDecryptBytes(unittest.TestCase):
     def _make_manager(self, decrypt_ok=True):
-        with patch("onilock.filemanager.gnupg.GPG") as MockGPG:
-            mock_gpg = MagicMock()
-            mock_result = MagicMock()
-            mock_result.ok = decrypt_ok
-            mock_result.data = b"plaintext"
-            mock_result.status = "decryption ok" if decrypt_ok else "decryption error"
-            mock_gpg.decrypt.return_value = mock_result
-            MockGPG.return_value = mock_gpg
-            with patch("onilock.filemanager.settings") as ms:
-                ms.GPG_HOME = "/tmp/gpg"
-                manager = FileEncryptionManager()
+        mock_gpg = MagicMock()
+        mock_result = MagicMock()
+        mock_result.ok = decrypt_ok
+        mock_result.data = b"plaintext"
+        mock_result.status = "decryption ok" if decrypt_ok else "decryption error"
+        mock_gpg.decrypt.return_value = mock_result
+        manager = FileEncryptionManager()
+        manager._gpg = mock_gpg
         return manager
 
     def test_decrypt_bytes_success(self):
@@ -339,16 +419,13 @@ class TestDelete(unittest.TestCase):
 
 class TestExport(unittest.TestCase):
     def _make_manager_with_decrypt(self):
-        with patch("onilock.filemanager.gnupg.GPG") as MockGPG:
-            mock_gpg = MagicMock()
-            mock_result = MagicMock()
-            mock_result.ok = True
-            mock_result.data = b"decrypted content"
-            mock_gpg.decrypt.return_value = mock_result
-            MockGPG.return_value = mock_gpg
-            with patch("onilock.filemanager.settings") as ms:
-                ms.GPG_HOME = "/tmp/gpg"
-                manager = FileEncryptionManager()
+        mock_gpg = MagicMock()
+        mock_result = MagicMock()
+        mock_result.ok = True
+        mock_result.data = b"decrypted content"
+        mock_gpg.decrypt.return_value = mock_result
+        manager = FileEncryptionManager()
+        manager._gpg = mock_gpg
         return manager
 
     def test_export_invalid_file_id_exits(self):
@@ -519,17 +596,35 @@ class TestExport(unittest.TestCase):
 
 
 class TestOpen(unittest.TestCase):
+    def setUp(self):
+        # Assume vim is installed unless a test says otherwise.
+        patcher = patch("onilock.filemanager.ensure_installed", return_value=True)
+        self.mock_ensure = patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_open_without_vim_exits_before_decrypting(self):
+        from onilock.core.dependencies import VIM
+
+        manager = self._make_manager()
+        manager._profile = _make_profile(with_file=True)
+        manager._engine = MagicMock()
+        self.mock_ensure.return_value = False
+
+        with self.assertRaises(SystemExit):
+            manager.open("doc1", readonly=True)
+
+        self.mock_ensure.assert_called_once_with([VIM])
+        manager.gpg.decrypt.assert_not_called()
+
     def _make_manager(self):
-        with patch("onilock.filemanager.gnupg.GPG") as MockGPG:
-            mock_gpg = MagicMock()
-            mock_result = MagicMock()
-            mock_result.ok = True
-            mock_result.data = b"file content"
-            mock_gpg.decrypt.return_value = mock_result
-            MockGPG.return_value = mock_gpg
-            with patch("onilock.filemanager.settings") as ms:
-                ms.GPG_HOME = "/tmp/gpg"
-                manager = FileEncryptionManager()
+        mock_gpg = MagicMock()
+        mock_gpg.list_keys.return_value = _EXISTING_KEY
+        mock_result = MagicMock()
+        mock_result.ok = True
+        mock_result.data = b"file content"
+        mock_gpg.decrypt.return_value = mock_result
+        manager = FileEncryptionManager()
+        manager._gpg = mock_gpg
         return manager
 
     def test_open_invalid_file_id_exits(self):

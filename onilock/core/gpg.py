@@ -1,10 +1,32 @@
 from typing import Optional
 import gnupg
 
+from onilock.core.dependencies import GNUPG, ensure_installed
+from onilock.core.exceptions.exceptions import GPGNotAvailableError
+
+
+def get_gpg(gpg_home: Optional[str] = None, **kwargs) -> gnupg.GPG:
+    """
+    Create a GPG client, offering to install GnuPG if it is missing.
+
+    Raises:
+        GPGNotAvailableError: If gpg is missing and was not installed.
+    """
+    try:
+        return gnupg.GPG(gnupghome=gpg_home, **kwargs)
+    except OSError as exc:
+        if GNUPG.is_installed():
+            raise
+        if ensure_installed([GNUPG]):
+            return gnupg.GPG(gnupghome=gpg_home, **kwargs)
+        raise GPGNotAvailableError(
+            "This command needs GnuPG (gpg), which is not installed."
+        ) from exc
+
 
 def generate_pgp_key(gpg_home: Optional[str], name: str, email: str, passphrase: str):
     """Generate a new PGP key pair."""
-    gpg = gnupg.GPG(gnupghome=gpg_home)
+    gpg = get_gpg(gpg_home)
     input_data = gpg.gen_key_input(
         key_type="RSA",
         key_length=4096,  # ALT: 3072
@@ -22,7 +44,7 @@ def pgp_key_exists(
     real_name: Optional[str] = None,
 ) -> bool:
     """Check if a key exists in the keyring."""
-    gpg = gnupg.GPG(gnupghome=gpg_home)
+    gpg = get_gpg(gpg_home)
     keys = gpg.list_keys()
 
     if key_fingerprint:
@@ -48,7 +70,7 @@ def get_pgp_key_info(
     key_id: Optional[str] = None,
 ) -> dict:
     """Get key details if exists in keyring."""
-    gpg = gnupg.GPG(gnupghome=gpg_home)
+    gpg = get_gpg(gpg_home)
     keys = gpg.list_keys()
 
     for key in keys:
@@ -74,7 +96,7 @@ def delete_pgp_key(
     """Delete PGP public and private key."""
     from onilock.core.exceptions.exceptions import EncryptionKeyNotFoundError
 
-    gpg = gnupg.GPG(gnupghome=gpg_home)
+    gpg = get_gpg(gpg_home)
     key_info = get_pgp_key_info(gpg_home, real_name, key_id)
     if key_info is None:
         raise EncryptionKeyNotFoundError()

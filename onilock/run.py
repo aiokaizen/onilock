@@ -8,7 +8,6 @@ import io
 import hashlib
 from pathlib import Path
 import uuid
-import gnupg
 
 import typer
 from rich.panel import Panel
@@ -61,7 +60,9 @@ from onilock.core.profiles import (
     remove_profile,
 )
 from onilock.core.audit import audit
-from onilock.core.gpg import get_pgp_key_info, delete_pgp_key
+from onilock.core.dependencies import ensure_installed, system_dependencies
+from onilock.core.exceptions.exceptions import GPGNotAvailableError
+from onilock.core.gpg import get_gpg, get_pgp_key_info, delete_pgp_key
 from onilock.core.keystore import KeyStoreManager
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives import hashes
@@ -172,7 +173,11 @@ def initialize_vault(
             hide_input=False,
         )
 
-    return initialize(master_password, pin=pin)
+    master_password = initialize(master_password, pin=pin)
+
+    # Offer the tools some commands rely on while the user is setting up.
+    ensure_installed(system_dependencies())
+    return master_password
 
 
 @app.command(rich_help_panel="Passwords")
@@ -613,6 +618,13 @@ def _export_vault_impl(
 
                 try:
                     content = filemanager.decrypt(file.id)
+                except GPGNotAvailableError as exc:
+                    # Every file needs gpg: stop here instead of asking to
+                    # install it once per file.
+                    console.print(
+                        f"[bold yellow]![/bold yellow] Skipped all files: {exc}"
+                    )
+                    break
                 except Exception as exc:
                     console.print(
                         f"[bold yellow]![/bold yellow] Skipped file [bold]{file.id}[/bold]: {exc}"
@@ -1335,9 +1347,10 @@ def tags_list(
 
 
 @keys_app.command("list")
+@exception_handler
 def keys_list():
     """List GPG keys and the active vault secret key id."""
-    gpg = gnupg.GPG(gnupghome=settings.GPG_HOME)
+    gpg = get_gpg(settings.GPG_HOME)
     secret_keys = gpg.list_keys(secret=True)
     if not secret_keys:
         console.print("[bold yellow]![/bold yellow] No GPG secret keys found.")
@@ -1364,12 +1377,18 @@ def keys_delete(name: Optional[str] = None, key_id: Optional[str] = None):
         raise SystemExit(1)
     target = name or key_id
     typer.confirm(f"Delete GPG key '{target}'?", abort=True)
-    delete_pgp_key(
-        passphrase=settings.PASSPHRASE,
-        gpg_home=settings.GPG_HOME,
-        real_name=name,
-        key_id=key_id,
-    )
+    # Handled here rather than with exception_handler, which would also
+    # swallow the Abort raised when the confirmation is declined.
+    try:
+        delete_pgp_key(
+            passphrase=settings.PASSPHRASE,
+            gpg_home=settings.GPG_HOME,
+            real_name=name,
+            key_id=key_id,
+        )
+    except GPGNotAvailableError as e:
+        console.print(f"[bold red]✗[/bold red] {e}")
+        raise SystemExit(1)
     console.print("[bold green]✓[/bold green] Key deleted.")
     audit("keys.gpg.deleted", name=name, key_id=key_id)
 
@@ -1485,22 +1504,13 @@ def _collect_doctor_payload(verbose: bool = False) -> dict:
             }
         )
 
-    try:
-        import subprocess
-
-        subprocess.run(
-            ["gpg", "--version"],
-            check=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        checks.append({"name": "gpg_installed", "ok": True, "detail": ""})
-    except Exception as exc:
+    # System tools (gpg, clipboard tool, vim)
+    for dep in system_dependencies():
         checks.append(
             {
-                "name": "gpg_installed",
-                "ok": False,
-                "detail": str(exc) if verbose else "",
+                "name": f"{dep.binaries[0]}_installed",
+                "ok": dep.is_installed(),
+                "detail": dep.purpose if verbose else "",
             }
         )
 
@@ -1624,6 +1634,8 @@ def doctor(
         if verbose and item["detail"]:
             line += f" ({item['detail']})"
         console.print(line)
+
+    ensure_installed(system_dependencies())
 
 
 @app.command(rich_help_panel="Utilities")
