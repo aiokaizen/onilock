@@ -3,8 +3,10 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
+from onilock.core.exceptions.exceptions import GPGNotAvailableError
 from onilock.core.gpg import (
     generate_pgp_key,
+    get_gpg,
     pgp_key_exists,
     get_pgp_key_info,
     delete_pgp_key,
@@ -25,6 +27,58 @@ _SAMPLE_KEYS = [
         "uids": ["testkey <test@onilock.com>", "testkey (comment) <other@test.com>"],
     }
 ]
+
+
+class TestGetGpg(unittest.TestCase):
+    def test_returns_gpg_client(self):
+        mock_gpg = MagicMock()
+        with patch("onilock.core.gpg.gnupg.GPG", return_value=mock_gpg) as MockGPG:
+            result = get_gpg("/tmp/gpg", options=["--pinentry-mode", "loopback"])
+
+        MockGPG.assert_called_once_with(
+            gnupghome="/tmp/gpg", options=["--pinentry-mode", "loopback"]
+        )
+        self.assertIs(result, mock_gpg)
+
+    def test_missing_gpg_declined_raises(self):
+        with patch(
+            "onilock.core.gpg.gnupg.GPG", side_effect=OSError("Unable to run gpg")
+        ):
+            with patch("onilock.core.gpg.GNUPG") as mock_dep:
+                mock_dep.is_installed.return_value = False
+                with patch(
+                    "onilock.core.gpg.ensure_installed", return_value=False
+                ) as mock_ensure:
+                    with self.assertRaises(GPGNotAvailableError):
+                        get_gpg(None)
+
+        mock_ensure.assert_called_once_with([mock_dep])
+
+    def test_missing_gpg_installed_then_retried(self):
+        mock_gpg = MagicMock()
+        with patch(
+            "onilock.core.gpg.gnupg.GPG",
+            side_effect=[OSError("Unable to run gpg"), mock_gpg],
+        ) as MockGPG:
+            with patch("onilock.core.gpg.GNUPG") as mock_dep:
+                mock_dep.is_installed.return_value = False
+                with patch("onilock.core.gpg.ensure_installed", return_value=True):
+                    result = get_gpg("/tmp/gpg")
+
+        self.assertIs(result, mock_gpg)
+        self.assertEqual(MockGPG.call_count, 2)
+
+    def test_other_os_errors_are_not_masked(self):
+        with patch(
+            "onilock.core.gpg.gnupg.GPG", side_effect=PermissionError("denied")
+        ):
+            with patch("onilock.core.gpg.GNUPG") as mock_dep:
+                mock_dep.is_installed.return_value = True
+                with patch("onilock.core.gpg.ensure_installed") as mock_ensure:
+                    with self.assertRaises(PermissionError):
+                        get_gpg("/tmp/gpg")
+
+        mock_ensure.assert_not_called()
 
 
 class TestGeneratePgpKey(unittest.TestCase):

@@ -356,6 +356,57 @@ class TestListFiles(unittest.TestCase):
 
 
 class TestCopyAccountPassword(unittest.TestCase):
+    def setUp(self):
+        # Behave like macOS (built-in clipboard) unless a test says otherwise.
+        patcher = patch(
+            "onilock.account_manager.clipboard_dependency", return_value=None
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _copy_with_missing_clipboard_tool(self, installed):
+        """Return (exited, pyperclip.copy mock) after copying with no clipboard tool."""
+        profile = _make_profile(with_account=True)
+        engine = _make_engine(profile)
+        clipboard = MagicMock()
+        exited = False
+
+        with patch("onilock.account_manager.get_profile_engine", return_value=engine):
+            with patch("onilock.account_manager.settings") as ms:
+                ms.SECRET_KEY = TEST_SECRET_KEY
+                with patch(
+                    "onilock.account_manager.clipboard_dependency",
+                    return_value=clipboard,
+                ):
+                    with patch(
+                        "onilock.account_manager.ensure_installed",
+                        return_value=installed,
+                    ) as mock_ensure:
+                        with patch("onilock.account_manager.pyperclip.copy") as mock_copy:
+                            with patch("onilock.account_manager.multiprocessing.Process"):
+                                with patch("onilock.account_manager.os._exit"):
+                                    from onilock.account_manager import (
+                                        copy_account_password,
+                                    )
+
+                                    try:
+                                        copy_account_password("github")
+                                    except SystemExit:
+                                        exited = True
+
+        mock_ensure.assert_called_once_with([clipboard])
+        return exited, mock_copy
+
+    def test_missing_clipboard_tool_declined_exits_without_copying(self):
+        exited, mock_copy = self._copy_with_missing_clipboard_tool(installed=False)
+        self.assertTrue(exited)
+        mock_copy.assert_not_called()
+
+    def test_missing_clipboard_tool_installed_then_copies(self):
+        exited, mock_copy = self._copy_with_missing_clipboard_tool(installed=True)
+        self.assertFalse(exited)
+        mock_copy.assert_called_once_with("mypassword")
+
     def test_copy_valid_account_by_name(self):
         profile = _make_profile(with_account=True)
         engine = _make_engine(profile)
@@ -485,6 +536,61 @@ class TestDeleteProfile(unittest.TestCase):
                                 delete_profile(TEST_MASTER_PASSWORD)
 
         mock_ks.clear.assert_called_once()
+
+    def _delete_with(self, delete_pgp_key_side_effect=None, gpg_installed=True):
+        """Run delete_profile and return (parent mock, rmtree mock) for call-order checks."""
+        profile = _make_profile()
+        engine = _make_engine(profile)
+        parent = MagicMock()
+
+        patcher = patch("onilock.account_manager.GNUPG")
+        patcher.start().is_installed.return_value = gpg_installed
+        self.addCleanup(patcher.stop)
+
+        with patch("onilock.account_manager.get_profile_engine", return_value=engine):
+            with patch(
+                "onilock.account_manager.get_passphrase", return_value="passphrase"
+            ):
+                with patch("onilock.account_manager.keystore", parent.keystore):
+                    with patch(
+                        "onilock.account_manager.delete_pgp_key",
+                        parent.delete_pgp_key,
+                    ):
+                        parent.delete_pgp_key.side_effect = delete_pgp_key_side_effect
+                        with patch(
+                            "onilock.account_manager.shutil.rmtree"
+                        ) as mock_rmtree:
+                            with patch("onilock.account_manager.settings") as ms:
+                                ms.GPG_HOME = "/tmp/gpg"
+                                ms.PGP_REAL_NAME = "test"
+                                ms.VAULT_DIR = "/tmp/vault"
+                                ms.DB_NAME = "test_profile"
+                                from onilock.account_manager import delete_profile
+
+                                delete_profile(TEST_MASTER_PASSWORD)
+
+        return parent, mock_rmtree
+
+    def test_delete_removes_pgp_key_before_clearing_keystore(self):
+        parent, _ = self._delete_with()
+
+        names = [c[0] for c in parent.mock_calls]
+        self.assertLess(names.index("delete_pgp_key"), names.index("keystore.clear"))
+
+    def test_delete_without_pgp_key_still_erases(self):
+        from onilock.core.exceptions.exceptions import EncryptionKeyNotFoundError
+
+        parent, mock_rmtree = self._delete_with(EncryptionKeyNotFoundError())
+
+        parent.keystore.clear.assert_called_once()
+        mock_rmtree.assert_called_once_with("/tmp/vault")
+
+    def test_delete_without_gpg_skips_key_and_still_erases(self):
+        parent, mock_rmtree = self._delete_with(gpg_installed=False)
+
+        parent.delete_pgp_key.assert_not_called()
+        parent.keystore.clear.assert_called_once()
+        mock_rmtree.assert_called_once_with("/tmp/vault")
 
     def test_delete_invalid_master_password_exits(self):
         profile = _make_profile()

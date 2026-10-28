@@ -10,6 +10,10 @@ class EncryptionKeyNotFoundError(BaseException):
     pass
 
 
+class GPGNotAvailableError(BaseException):
+    pass
+
+
 class DatabaseEngineAlreadyExistsException(BaseException):
     def __init__(self, id: str = "") -> None:
         if id:

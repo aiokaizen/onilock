@@ -21,6 +21,8 @@ from onilock.core.audit import audit
 from onilock.core.auth import is_locked, record_failure, clear_failures, rate_limit_delay
 from onilock.core.ui import console, success, error, warning, info
 from onilock.core.profiles import register_profile, remove_profile
+from onilock.core.dependencies import GNUPG, clipboard_dependency, ensure_installed
+from onilock.core.exceptions.exceptions import EncryptionKeyNotFoundError
 from onilock.core.gpg import (
     delete_pgp_key,
 )
@@ -442,6 +444,11 @@ def copy_account_password(id: str | int):
         error("Clipboard is disabled. Set ONI_CLIPBOARD=true to enable.")
         exit(1)
 
+    clipboard = clipboard_dependency()
+    if clipboard and not ensure_installed([clipboard]):
+        error("Clipboard is not available on this system.")
+        exit(1)
+
     try:
         pyperclip.copy(decrypted_password)
     except Exception:
@@ -518,13 +525,22 @@ def delete_profile(master_password: str):
 
     passphrase = get_passphrase()
 
-    keystore.clear()
+    # New vaults only get a PGP key when a file is first encrypted, so it may be
+    # missing. Remove it before clearing the keystore so a GPG failure can't
+    # leave the vault half-deleted. Erasing never offers to install gpg.
+    if GNUPG.is_installed():
+        try:
+            delete_pgp_key(
+                passphrase=passphrase,
+                gpg_home=settings.GPG_HOME,
+                real_name=settings.PGP_REAL_NAME,
+            )
+        except EncryptionKeyNotFoundError:
+            pass
+    else:
+        warning("gpg is not installed, so no PGP key was removed.")
 
-    delete_pgp_key(
-        passphrase=passphrase,
-        gpg_home=settings.GPG_HOME,
-        real_name=settings.PGP_REAL_NAME,
-    )
+    keystore.clear()
 
     shutil.rmtree(settings.VAULT_DIR)
     success("All user data has been permanently deleted.")

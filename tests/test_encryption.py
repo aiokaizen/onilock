@@ -144,7 +144,7 @@ class TestGPGEncryptionBackend(unittest.TestCase):
             mock_gpg_instance.list_keys.return_value = []
 
         with patch(
-            "onilock.core.encryption.encryption.gnupg.GPG",
+            "onilock.core.gpg.gnupg.GPG",
             return_value=mock_gpg_instance,
         ):
             with patch("onilock.core.encryption.encryption.settings") as ms:
@@ -167,7 +167,7 @@ class TestGPGEncryptionBackend(unittest.TestCase):
         mock_gpg.gen_key.return_value = MagicMock()
 
         with patch(
-            "onilock.core.encryption.encryption.gnupg.GPG", return_value=mock_gpg
+            "onilock.core.gpg.gnupg.GPG", return_value=mock_gpg
         ):
             with patch("onilock.core.encryption.encryption.settings") as ms:
                 ms.PASSPHRASE = "test-pass"
