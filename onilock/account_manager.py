@@ -4,8 +4,14 @@ import shutil
 import uuid
 import multiprocessing
 import os
-from typing import Optional
+import json
+import time
+import csv
+import re
+import xml.etree.ElementTree as ET
+from typing import Optional, Iterable
 import base64
+from difflib import SequenceMatcher
 
 from cryptography.fernet import Fernet
 import pyperclip
@@ -37,13 +43,35 @@ from onilock.core.utils import (
 )
 from onilock.core.passwords import password_health
 from onilock.db import DatabaseManager
-from onilock.db.models import Profile, Account
+from onilock.db.models import Profile, Account, PasswordVersion
 
 
 __all__ = [
     "initialize",
     "new_account",
     "copy_account_password",
+    "get_account_secret",
+    "set_account_note",
+    "get_account_note",
+    "clear_account_note",
+    "add_account_tags",
+    "remove_account_tags",
+    "list_account_tags",
+    "replace_account_password",
+    "rotate_account_password",
+    "get_account_history",
+    "get_password_health_report",
+    "get_accounts_payload",
+    "get_files_payload",
+    "import_secrets",
+    "vault_check",
+    "vault_repair",
+    "unlock_with_pin",
+    "reset_profile_pin",
+    "require_unlock_if_enabled",
+    "pin_unlock_required",
+    "is_profile_unlocked",
+    "search_accounts",
     "remove_account",
     "delete_profile",
     "rotate_secret_key",
@@ -56,6 +84,75 @@ def pre_command():
 
 def post_command():
     logger.debug("Starting post-command hook.")
+
+
+def _unlock_path() -> Path:
+    return Path(settings.BASE_DIR) / ".unlock.json"
+
+
+def _load_unlock_cache() -> dict:
+    path = _unlock_path()
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text())
+    except Exception:
+        return {}
+
+
+def _save_unlock_cache(data: dict) -> None:
+    path = _unlock_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2))
+
+
+def _unlock_ttl_sec() -> int:
+    raw = os.environ.get("ONI_UNLOCK_TTL_SEC", "600")
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return 600
+    return value if value > 0 else 600
+
+
+def _pin_lockout_key(profile_name: str) -> str:
+    return f"{profile_name}:pin"
+
+
+def _validate_pin(pin: str) -> None:
+    if not pin.isdigit() or len(pin) != 4:
+        error("PIN must be exactly 4 digits.")
+        exit(1)
+
+
+def is_profile_unlocked(profile_name: Optional[str] = None) -> bool:
+    profile = profile_name or settings.DB_NAME
+    data = _load_unlock_cache()
+    entry = data.get(profile, {})
+    expires_at = int(entry.get("expires_at", 0))
+    now = int(time.time())
+    if expires_at <= now:
+        if profile in data:
+            del data[profile]
+            _save_unlock_cache(data)
+        return False
+    return True
+
+
+def _set_profile_unlock(profile_name: str, ttl_sec: Optional[int] = None) -> int:
+    ttl = ttl_sec if ttl_sec is not None else _unlock_ttl_sec()
+    expires_at = int(time.time()) + ttl
+    data = _load_unlock_cache()
+    data[profile_name] = {"expires_at": expires_at}
+    _save_unlock_cache(data)
+    return expires_at
+
+
+def _clear_profile_unlock(profile_name: str) -> None:
+    data = _load_unlock_cache()
+    if profile_name in data:
+        del data[profile_name]
+        _save_unlock_cache(data)
 
 
 def verify_master_password(master_password: str):
@@ -162,13 +259,149 @@ def get_profile_engine():
     return db_manager.add_engine("data", config_filepath, is_encrypted=True)
 
 
+def reset_profile_pin(pin: Optional[str], master_password: Optional[str] = None) -> dict:
+    """
+    Set, change, or disable the profile PIN.
+    Pass an empty string to disable PIN-based unlock gating.
+
+    When a PIN is already set, the vault must be unlocked or the master
+    password given, otherwise anyone could remove the PIN.
+    """
+    engine = get_profile_engine()
+    if not engine:
+        error(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+        )
+        exit(1)
+    data = engine.read()
+    if not data:
+        error(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+        )
+        exit(1)
+
+    profile = Profile(**data)
+    if profile.pin_enabled and not is_profile_unlocked(profile.name):
+        if not master_password or not verify_master_password(master_password):
+            audit("auth.pin.reset_denied", profile=profile.name)
+            error(
+                "Changing the PIN needs the master password, or run "
+                "[bold]onilock unlock[/bold] first."
+            )
+            exit(1)
+        # verify_master_password may rewrite the profile (bcrypt upgrade).
+        profile = Profile(**engine.read())
+
+    if pin is None or pin == "":
+        profile.pin_enabled = False
+        profile.pin_hash = None
+        _clear_profile_unlock(profile.name)
+        engine.write(profile.model_dump())
+        audit("auth.pin.disabled", profile=profile.name)
+        return {"pin_enabled": False}
+
+    _validate_pin(pin)
+    hashed = bcrypt.hashpw(pin.encode(), bcrypt.gensalt(rounds=_get_bcrypt_rounds()))
+    profile.pin_hash = base64.b64encode(hashed).decode()
+    profile.pin_enabled = True
+    _clear_profile_unlock(profile.name)
+    engine.write(profile.model_dump())
+    audit("auth.pin.set", profile=profile.name)
+    return {"pin_enabled": True}
+
+
+def unlock_with_pin(pin: str) -> dict:
+    """
+    Validate PIN and create a temporary unlocked session.
+    """
+    _validate_pin(pin)
+
+    engine = get_profile_engine()
+    if not engine:
+        error(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+        )
+        exit(1)
+    data = engine.read()
+    if not data:
+        error(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+        )
+        exit(1)
+
+    profile = Profile(**data)
+    if not profile.pin_enabled or not profile.pin_hash:
+        info("PIN unlock is disabled for this profile.")
+        return {"unlocked": True, "pin_enabled": False}
+
+    # A 4-digit PIN has 10,000 values, so failed attempts share the
+    # master password lockout rules under a separate key.
+    lockout_key = _pin_lockout_key(profile.name)
+    locked, remaining = is_locked(lockout_key)
+    if locked:
+        error(f"Too many failed PIN attempts. Try again in {remaining}s.")
+        audit("auth.pin.locked_out", profile=profile.name, remaining=remaining)
+        exit(1)
+
+    try:
+        pin_hash = base64.b64decode(profile.pin_hash)
+    except Exception:
+        error("Stored PIN hash is invalid. Reset the PIN with [bold]onilock pin reset[/bold].")
+        exit(1)
+
+    if not bcrypt.checkpw(pin.encode(), pin_hash):
+        failed = record_failure(lockout_key)
+        audit("auth.pin.failed", profile=profile.name, attempts=failed)
+        rate_limit_delay(failed)
+        error("Invalid PIN.")
+        exit(1)
+
+    clear_failures(lockout_key)
+    expires_at = _set_profile_unlock(profile.name)
+    audit("auth.pin.unlocked", profile=profile.name, expires_at=expires_at)
+    return {
+        "unlocked": True,
+        "pin_enabled": True,
+        "expires_at": expires_at,
+        "ttl_sec": _unlock_ttl_sec(),
+    }
+
+
+def pin_unlock_required() -> bool:
+    """
+    Return True when the active profile has a PIN and no unlock session.
+    """
+    engine = get_profile_engine()
+    if not engine:
+        return False
+    data = engine.read()
+    if not data:
+        return False
+
+    profile = Profile(**data)
+    return profile.pin_enabled and not is_profile_unlocked(profile.name)
+
+
+def require_unlock_if_enabled() -> None:
+    """
+    Enforce unlock gate only when PIN is enabled on the active profile.
+    """
+    if not pin_unlock_required():
+        return
+
+    error("Vault is locked. Run [bold]onilock unlock[/bold] first.")
+    audit("auth.pin.locked", profile=settings.DB_NAME)
+    exit(1)
+
+
 @pre_post_hooks(pre_command, post_command)
-def initialize(master_password: Optional[str] = None):
+def initialize(master_password: Optional[str] = None, pin: Optional[str] = None):
     """
     Initialize the password manager with a master password.
 
     Args:
         master_password (Optional[str]): The master password used to secure all the other accounts.
+        pin (Optional[str]): Optional 4-digit unlock PIN.
     """
     logger.debug("Initializing database with a master password.")
 
@@ -209,10 +442,21 @@ def initialize(master_password: Optional[str] = None):
     )
     b64_hashed_master_password = base64.b64encode(hashed_master_password).decode()
 
+    pin_hash = None
+    pin_enabled = False
+    if pin is not None and pin != "":
+        _validate_pin(pin)
+        pin_hash = base64.b64encode(
+            bcrypt.hashpw(pin.encode(), bcrypt.gensalt(rounds=_get_bcrypt_rounds()))
+        ).decode()
+        pin_enabled = True
+
     profile = Profile(
         name=name,
         master_password=b64_hashed_master_password,
         vault_version=get_version(),
+        pin_hash=pin_hash,
+        pin_enabled=pin_enabled,
         accounts=list(),
         files=[],
     )
@@ -318,6 +562,7 @@ def new_account(
 def list_accounts():
     """List all available accounts."""
 
+    payload = get_accounts_payload()
     engine = get_profile_engine()
     if not engine:
         info(
@@ -332,7 +577,7 @@ def list_accounts():
         return
     profile = Profile(**data)
 
-    if not profile.accounts:
+    if not payload:
         info(
             f"No accounts found in [bold]{profile.name}[/bold]. "
             "Use [bold]onilock new[/bold] to add one."
@@ -346,23 +591,47 @@ def list_accounts():
     table.add_column("URL", style="blue")
     table.add_column("Created", style="dim")
 
-    for index, account in enumerate(profile.accounts):
-        created_date = datetime.fromtimestamp(account.created_at).strftime("%Y-%m-%d")
+    for item in payload:
         table.add_row(
-            str(index + 1),
-            account.id,
-            account.username or "—",
-            account.url or "—",
-            created_date,
+            str(item["index"]),
+            item["id"],
+            item["username"] or "—",
+            item["url"] or "—",
+            item["created"],
         )
 
     console.print(table)
+
+
+def get_accounts_payload():
+    """Return accounts as JSON-safe payload."""
+    engine = get_profile_engine()
+    if not engine:
+        return []
+    data = engine.read()
+    if not data:
+        return []
+    profile = Profile(**data)
+
+    payload = []
+    for index, account in enumerate(profile.accounts):
+        payload.append(
+            {
+                "index": index + 1,
+                "id": account.id,
+                "username": account.username or "",
+                "url": account.url or "",
+                "created": datetime.fromtimestamp(account.created_at).strftime("%Y-%m-%d"),
+            }
+        )
+    return payload
 
 
 @pre_post_hooks(pre_command, post_command)
 def list_files():
     """List all available files."""
 
+    payload = get_files_payload()
     engine = get_profile_engine()
     if not engine:
         info(
@@ -377,7 +646,7 @@ def list_files():
         return
     profile = Profile(**data)
 
-    if not profile.files:
+    if not payload:
         info(
             f"No files found in [bold]{profile.name}[/bold]. "
             "Use [bold]onilock encrypt-file[/bold] to add one."
@@ -391,17 +660,1049 @@ def list_files():
     table.add_column("Host", style="dim")
     table.add_column("Created", style="dim")
 
-    for file in profile.files:
-        created_date = datetime.fromtimestamp(file.created_at).strftime("%Y-%m-%d")
+    for item in payload:
         table.add_row(
-            file.id,
-            Path(file.src).name,
-            file.user,
-            file.host,
-            created_date,
+            item["id"],
+            Path(item["src"]).name,
+            item["user"],
+            item["host"],
+            item["created"],
         )
 
     console.print(table)
+
+
+def get_files_payload():
+    """Return encrypted files as JSON-safe payload."""
+    engine = get_profile_engine()
+    if not engine:
+        return []
+    data = engine.read()
+    if not data:
+        return []
+    profile = Profile(**data)
+
+    payload = []
+    for file in profile.files:
+        payload.append(
+            {
+                "id": file.id,
+                "src": file.src,
+                "user": file.user,
+                "host": file.host,
+                "created": datetime.fromtimestamp(file.created_at).strftime("%Y-%m-%d"),
+            }
+        )
+    return payload
+
+
+def _score_match(query: str, value: str) -> float:
+    if not value:
+        return 0.0
+
+    q = query.lower().strip()
+    text = value.lower().strip()
+    if not q or not text:
+        return 0.0
+
+    score = SequenceMatcher(None, q, text).ratio()
+    if text == q:
+        score += 1.0
+    elif text.startswith(q):
+        score += 0.35
+    elif q in text:
+        score += 0.2
+
+    return score
+
+
+def search_accounts(query: str, limit: int = 10):
+    """
+    Fuzzy search accounts by id, username, url, description and tags.
+    """
+    if not query or not query.strip():
+        return []
+
+    engine = get_profile_engine()
+    if not engine:
+        return []
+    data = engine.read()
+    if not data:
+        return []
+
+    profile = Profile(**data)
+    q = query.strip()
+    results = []
+    for account in profile.accounts:
+        tags = getattr(account, "tags", []) or []
+        tags_str = " ".join(str(t) for t in tags)
+
+        candidates = [
+            account.id or "",
+            account.username or "",
+            account.url or "",
+            account.description or "",
+            tags_str,
+        ]
+        score = max((_score_match(q, value) for value in candidates), default=0.0)
+        if score < 0.45:
+            continue
+
+        results.append(
+            {
+                "id": account.id,
+                "username": account.username or "",
+                "url": account.url or "",
+                "description": account.description or "",
+                "score": round(score, 4),
+            }
+        )
+
+    results.sort(key=lambda item: (-item["score"], item["id"].lower()))
+    cap = max(1, int(limit))
+    return [
+        {"rank": idx + 1, **item}
+        for idx, item in enumerate(results[:cap])
+    ]
+
+
+def get_account_secret(id: str | int):
+    """
+    Decrypt and return a single account secret payload.
+    """
+    engine = get_profile_engine()
+    if not engine:
+        error(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+        )
+        exit(1)
+    data = engine.read()
+    if not data:
+        error(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+        )
+        exit(1)
+
+    profile = Profile(**data)
+    account = profile.get_account(id)
+    if not account:
+        error(
+            f"Account [bold]{id}[/bold] not found. "
+            "Run [bold]onilock list[/bold] to see available accounts."
+        )
+        exit(1)
+
+    cipher = Fernet(settings.SECRET_KEY.encode())
+    encrypted_password = base64.b64decode(account.encrypted_password)
+    decrypted_password = cipher.decrypt(encrypted_password).decode()
+    return {
+        "id": account.id,
+        "username": account.username or "",
+        "url": account.url or "",
+        "password": decrypted_password,
+    }
+
+
+def _get_history_max() -> int:
+    raw = getattr(settings, "ONI_HISTORY_MAX", 20)
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return 20
+    return value if value >= 1 else 20
+
+
+def replace_account_password(
+    id: str | int,
+    new_password: str,
+    reason: str = "replace",
+):
+    """
+    Replace an account password and keep the previous encrypted value in history.
+    """
+    engine = get_profile_engine()
+    if not engine:
+        error(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+        )
+        exit(1)
+    data = engine.read()
+    if not data:
+        error(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+        )
+        exit(1)
+
+    profile = Profile(**data)
+    account = profile.get_account(id)
+    if not account:
+        error(
+            f"Account [bold]{id}[/bold] not found. "
+            "Run [bold]onilock list[/bold] to see available accounts."
+        )
+        exit(1)
+
+    existing_history = getattr(account, "history", []) or []
+    history = []
+    for entry in existing_history:
+        if isinstance(entry, PasswordVersion):
+            history.append(entry)
+            continue
+        try:
+            history.append(PasswordVersion(**entry))
+        except Exception:
+            continue
+
+    history.append(
+        PasswordVersion(
+            encrypted_password=account.encrypted_password,
+            created_at=int(naive_utcnow().timestamp()),
+            reason=reason,
+        )
+    )
+    max_items = _get_history_max()
+    account.history = history[-max_items:]
+
+    cipher = Fernet(settings.SECRET_KEY.encode())
+    encrypted_password = cipher.encrypt(new_password.encode())
+    account.encrypted_password = base64.b64encode(encrypted_password).decode()
+
+    existing_passwords = []
+    for acct in profile.accounts:
+        if acct.id.lower() == account.id.lower():
+            continue
+        try:
+            encrypted = base64.b64decode(acct.encrypted_password)
+            existing_passwords.append(cipher.decrypt(encrypted).decode())
+        except Exception:
+            continue
+    health = password_health(new_password, existing_passwords)
+    account.is_weak_password = health["strength"] != "strong"
+
+    engine.write(profile.model_dump())
+    audit("account.password.replaced", account=account.id, reason=reason)
+    return {
+        "id": account.id,
+        "history_size": len(account.history),
+        "reason": reason,
+        "is_weak_password": account.is_weak_password,
+    }
+
+
+def rotate_account_password(
+    id: str | int,
+    length: int = 20,
+    include_special_chars: bool = True,
+):
+    new_password = generate_random_password(length, include_special_chars)
+    payload = replace_account_password(id, new_password, reason="rotate")
+    return {
+        "id": payload["id"],
+        "rotated": True,
+        "history_size": payload["history_size"],
+        "is_weak_password": payload["is_weak_password"],
+        "length": len(new_password),
+    }
+
+
+def get_account_history(id: str | int, limit: int = 10):
+    engine = get_profile_engine()
+    if not engine:
+        error(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+        )
+        exit(1)
+    data = engine.read()
+    if not data:
+        error(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+        )
+        exit(1)
+
+    profile = Profile(**data)
+    account = profile.get_account(id)
+    if not account:
+        error(
+            f"Account [bold]{id}[/bold] not found. "
+            "Run [bold]onilock list[/bold] to see available accounts."
+        )
+        exit(1)
+
+    history_items = []
+    for entry in getattr(account, "history", []) or []:
+        if isinstance(entry, PasswordVersion):
+            history_items.append(entry)
+            continue
+        try:
+            history_items.append(PasswordVersion(**entry))
+        except Exception:
+            continue
+
+    ordered_history = list(enumerate(history_items))
+    ordered_history.sort(key=lambda pair: (pair[1].created_at, pair[0]), reverse=True)
+    cap = max(1, int(limit))
+    return {
+        "id": account.id,
+        "history": [
+            {
+                "index": index + 1,
+                "created_at": item.created_at,
+                "reason": item.reason,
+            }
+            for index, (_, item) in enumerate(ordered_history[:cap])
+        ],
+    }
+
+
+def _decrypt_account_password(cipher: Fernet, account: Account) -> Optional[str]:
+    try:
+        encrypted = base64.b64decode(account.encrypted_password)
+        return cipher.decrypt(encrypted).decode()
+    except Exception:
+        return None
+
+
+def get_password_health_report(
+    id: str | int | None = None,
+    all_accounts: bool = False,
+):
+    engine = get_profile_engine()
+    if not engine:
+        error(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+        )
+        exit(1)
+    data = engine.read()
+    if not data:
+        error(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+        )
+        exit(1)
+
+    profile = Profile(**data)
+    cipher = Fernet(settings.SECRET_KEY.encode())
+
+    decrypted: dict[str, str] = {}
+    for account in profile.accounts:
+        password = _decrypt_account_password(cipher, account)
+        if password is not None:
+            decrypted[account.id] = password
+
+    if all_accounts:
+        accounts_payload = []
+        for account in profile.accounts:
+            current = decrypted.get(account.id)
+            if current is None:
+                continue
+            others = [
+                pwd
+                for acc_id, pwd in decrypted.items()
+                if acc_id.lower() != account.id.lower()
+            ]
+            health = password_health(current, others)
+            accounts_payload.append(
+                {
+                    "id": account.id,
+                    "strength": health["strength"],
+                    "reasons": health["reasons"],
+                    "entropy_bits": health["entropy_bits"],
+                    "reused": health["is_reused"],
+                    "is_common": health["is_common"],
+                }
+            )
+
+        accounts_payload.sort(key=lambda item: item["id"].lower())
+        weak_count = sum(1 for item in accounts_payload if item["strength"] != "strong")
+        strong_count = len(accounts_payload) - weak_count
+        return {
+            "summary": {
+                "total": len(accounts_payload),
+                "strong": strong_count,
+                "weak": weak_count,
+            },
+            "accounts": accounts_payload,
+        }
+
+    if id is None:
+        error("Provide an account identifier or pass [bold]--all[/bold].")
+        exit(1)
+
+    account = profile.get_account(id)
+    if not account:
+        error(
+            f"Account [bold]{id}[/bold] not found. "
+            "Run [bold]onilock list[/bold] to see available accounts."
+        )
+        exit(1)
+
+    current = decrypted.get(account.id)
+    if current is None:
+        return {
+            "id": account.id,
+            "health": {
+                "strength": "unknown",
+                "reasons": ["unable to decrypt password"],
+                "entropy_bits": 0.0,
+                "reused": False,
+                "is_common": False,
+            },
+        }
+
+    others = [
+        pwd
+        for acc_id, pwd in decrypted.items()
+        if acc_id.lower() != account.id.lower()
+    ]
+    health = password_health(current, others)
+    return {"id": account.id, "health": health}
+
+
+def _split_tags(raw: str) -> list[str]:
+    if not raw:
+        return []
+    return _normalize_tags([part for part in re.split(r"[;,]", raw) if part.strip()])
+
+
+def _parse_csv_records(path: str) -> list[dict]:
+    with open(path, "r", newline="", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        records = []
+        for row in reader:
+            lowered = {str(k).strip().lower(): (v or "") for k, v in row.items()}
+            account_id = (
+                lowered.get("id")
+                or lowered.get("title")
+                or lowered.get("name")
+                or lowered.get("account")
+                or ""
+            ).strip()
+            tags_raw = lowered.get("tags") or lowered.get("tag") or ""
+            records.append(
+                {
+                    "id": account_id,
+                    "username": (lowered.get("username") or lowered.get("user") or "").strip(),
+                    "password": lowered.get("password") or lowered.get("pass") or "",
+                    "url": (lowered.get("url") or "").strip(),
+                    "notes": (lowered.get("notes") or lowered.get("note") or "").strip(),
+                    "tags": _split_tags(tags_raw),
+                }
+            )
+    return records
+
+
+def _parse_keepass_xml_records(path: str) -> list[dict]:
+    try:
+        tree = ET.parse(path)
+    except ET.ParseError as exc:
+        raise RuntimeError(f"Invalid KeePass XML: {exc}") from exc
+
+    root = tree.getroot()
+    recycle_bin = (root.findtext("Meta/RecycleBinUUID") or "").strip()
+
+    def _entries(group):
+        if recycle_bin and (group.findtext("UUID") or "").strip() == recycle_bin:
+            return
+        # Direct children only: entries under <History> are older versions.
+        yield from group.findall("Entry")
+        for child in group.findall("Group"):
+            yield from _entries(child)
+
+    records = []
+    for entry in (e for group in root.findall("Root/Group") for e in _entries(group)):
+        values = {}
+        for string_node in entry.findall("String"):
+            key = (string_node.findtext("Key") or "").strip()
+            value = string_node.findtext("Value") or ""
+            if key:
+                values[key] = value if key == "Password" else value.strip()
+
+        tags_raw = (entry.findtext("Tags") or values.get("Tags") or "").strip()
+        records.append(
+            {
+                "id": (values.get("Title") or values.get("id") or "").strip(),
+                "username": (values.get("UserName") or "").strip(),
+                "password": values.get("Password") or "",
+                "url": (values.get("URL") or "").strip(),
+                "notes": (values.get("Notes") or "").strip(),
+                "tags": _split_tags(tags_raw),
+            }
+        )
+    return records
+
+
+def _parse_import_records(secret_format: str, path: str) -> list[dict]:
+    fmt = secret_format.lower().strip()
+    if fmt == "csv":
+        return _parse_csv_records(path)
+    if fmt == "keepass-xml":
+        return _parse_keepass_xml_records(path)
+    raise RuntimeError(f"Unsupported import format: {secret_format}")
+
+
+def _replace_password_in_profile(profile: Profile, account: Account, new_password: str, reason: str):
+    history = []
+    for entry in getattr(account, "history", []) or []:
+        if isinstance(entry, PasswordVersion):
+            history.append(entry)
+            continue
+        try:
+            history.append(PasswordVersion(**entry))
+        except Exception:
+            continue
+    history.append(
+        PasswordVersion(
+            encrypted_password=account.encrypted_password,
+            created_at=int(naive_utcnow().timestamp()),
+            reason=reason,
+        )
+    )
+    account.history = history[-_get_history_max():]
+
+    cipher = Fernet(settings.SECRET_KEY.encode())
+    encrypted_password = cipher.encrypt(new_password.encode())
+    account.encrypted_password = base64.b64encode(encrypted_password).decode()
+
+    existing_passwords = []
+    for acct in profile.accounts:
+        if acct.id.lower() == account.id.lower():
+            continue
+        decrypted = _decrypt_account_password(cipher, acct)
+        if decrypted is not None:
+            existing_passwords.append(decrypted)
+    health = password_health(new_password, existing_passwords)
+    account.is_weak_password = health["strength"] != "strong"
+
+
+def import_secrets(
+    secret_format: str,
+    path: str,
+    dry_run: bool = False,
+    replace_existing: bool = False,
+):
+    records = _parse_import_records(secret_format, path)
+    engine = get_profile_engine()
+    if not engine:
+        error(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+        )
+        exit(1)
+    data = engine.read()
+    if not data:
+        error(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+        )
+        exit(1)
+
+    profile = Profile(**data)
+    summary = {
+        "format": secret_format.lower(),
+        "processed": len(records),
+        "created": 0,
+        "updated": 0,
+        "skipped_existing": 0,
+        "invalid": 0,
+        "dry_run": dry_run,
+    }
+
+    cipher = Fernet(settings.SECRET_KEY.encode())
+    changed = False
+    for record in records:
+        account_id = record.get("id", "").strip()
+        password = record.get("password", "")
+        if not account_id or not password.strip():
+            summary["invalid"] += 1
+            continue
+
+        account = profile.get_account(account_id)
+        tags = _normalize_tags(record.get("tags", []))
+        note_text = record.get("notes", "")
+        note_value = (
+            base64.b64encode(cipher.encrypt(note_text.encode())).decode()
+            if note_text
+            else None
+        )
+
+        if account:
+            if not replace_existing:
+                summary["skipped_existing"] += 1
+                continue
+
+            summary["updated"] += 1
+            if dry_run:
+                continue
+
+            _replace_password_in_profile(profile, account, password, reason="replace")
+            account.username = record.get("username", "") or account.username
+            account.url = record.get("url", "") or account.url
+            account.notes = note_value
+            account.tags = tags
+            changed = True
+            continue
+
+        summary["created"] += 1
+        if dry_run:
+            continue
+
+        encrypted_password = cipher.encrypt(password.encode())
+        existing_passwords = []
+        for acct in profile.accounts:
+            decrypted = _decrypt_account_password(cipher, acct)
+            if decrypted is not None:
+                existing_passwords.append(decrypted)
+        health = password_health(password, existing_passwords)
+        profile.accounts.append(
+            Account(
+                id=account_id,
+                encrypted_password=base64.b64encode(encrypted_password).decode(),
+                username=record.get("username", ""),
+                url=record.get("url", "") or None,
+                description=None,
+                notes=note_value,
+                tags=tags,
+                is_weak_password=health["strength"] != "strong",
+                created_at=int(naive_utcnow().timestamp()),
+            )
+        )
+        changed = True
+
+    if changed and not dry_run:
+        engine.write(profile.model_dump())
+        audit(
+            "vault.import.secrets",
+            format=summary["format"],
+            created=summary["created"],
+            updated=summary["updated"],
+            skipped_existing=summary["skipped_existing"],
+            invalid=summary["invalid"],
+        )
+
+    return summary
+
+
+def _validate_history_entries(raw_history) -> list[dict]:
+    if not isinstance(raw_history, list):
+        return []
+
+    normalized = []
+    for entry in raw_history:
+        if not isinstance(entry, dict):
+            continue
+        encrypted_password = entry.get("encrypted_password")
+        created_at = entry.get("created_at")
+        reason = entry.get("reason")
+        if (
+            isinstance(encrypted_password, str)
+            and isinstance(created_at, int)
+            and reason in {"rotate", "replace"}
+        ):
+            normalized.append(
+                {
+                    "encrypted_password": encrypted_password,
+                    "created_at": created_at,
+                    "reason": reason,
+                }
+            )
+    return normalized
+
+
+def _detect_profile_issues(raw: dict) -> list[dict]:
+    issues = []
+    accounts = raw.get("accounts", [])
+    files = raw.get("files", [])
+
+    if not isinstance(accounts, list):
+        issues.append({"code": "malformed_account_records", "message": "accounts must be a list"})
+        return issues
+
+    for idx, account in enumerate(accounts):
+        if not isinstance(account, dict):
+            issues.append(
+                {
+                    "code": "malformed_account_records",
+                    "message": f"account[{idx}] must be an object",
+                }
+            )
+            continue
+
+        tags = account.get("tags", [])
+        if tags is not None and not isinstance(tags, list):
+            issues.append(
+                {
+                    "code": "malformed_tags",
+                    "message": f"account[{idx}] has invalid tags",
+                }
+            )
+
+        history = account.get("history", [])
+        if history is not None and not isinstance(history, list):
+            issues.append(
+                {
+                    "code": "malformed_history",
+                    "message": f"account[{idx}] has invalid history",
+                }
+            )
+
+    if isinstance(files, list):
+        for idx, file in enumerate(files):
+            if not isinstance(file, dict):
+                continue
+            location = file.get("location")
+            if location and not Path(location).exists():
+                issues.append(
+                    {
+                        "code": "dangling_file_metadata",
+                        "message": f"file[{idx}] points to missing path",
+                        "location": location,
+                    }
+                )
+    return issues
+
+
+def vault_check() -> dict:
+    issues = []
+    setup_path = Path(settings.SETUP_FILEPATH)
+    if not setup_path.exists():
+        issues.append(
+            {
+                "code": "missing_setup_file",
+                "message": f"Setup file is missing: {setup_path}",
+            }
+        )
+
+    engine = get_profile_engine()
+    if engine:
+        try:
+            raw = engine.read() or {}
+            if isinstance(raw, dict):
+                issues.extend(_detect_profile_issues(raw))
+            else:
+                issues.append(
+                    {"code": "malformed_profile_data", "message": "profile data is not a dict"}
+                )
+        except Exception as exc:
+            issues.append({"code": "malformed_profile_data", "message": str(exc)})
+
+    return {"ok": len(issues) == 0, "issues": issues}
+
+
+def _discover_profile_file_from_vault() -> Optional[Path]:
+    vault_dir = Path(settings.VAULT_DIR)
+    if not vault_dir.exists():
+        return None
+
+    for candidate in vault_dir.glob("*.oni"):
+        try:
+            engine = DatabaseManager(
+                database_url=str(candidate), is_encrypted=True
+            ).get_engine()
+            payload = engine.read() or {}
+            if isinstance(payload, dict) and "master_password" in payload and "accounts" in payload:
+                return candidate
+        except Exception:
+            continue
+    return None
+
+
+def _rebuild_setup_link(profile_path: Path) -> bool:
+    try:
+        db_manager = DatabaseManager(
+            database_url=settings.SETUP_FILEPATH, is_encrypted=True
+        )
+        setup_engine = db_manager.get_engine()
+        setup_data = setup_engine.read() or {}
+        if not isinstance(setup_data, dict):
+            setup_data = {}
+
+        cipher = Fernet(settings.SECRET_KEY.encode())
+        encrypted_filepath = cipher.encrypt(str(profile_path).encode())
+        setup_data[settings.DB_NAME] = {
+            "filepath": base64.b64encode(encrypted_filepath).decode()
+        }
+        setup_engine.write(setup_data)
+        return True
+    except Exception:
+        return False
+
+
+def vault_repair(apply: bool = False) -> dict:
+    check = vault_check()
+    planned_actions = []
+    issue_codes = {issue["code"] for issue in check["issues"]}
+
+    if "dangling_file_metadata" in issue_codes:
+        planned_actions.append("remove_dangling_file_metadata")
+    if "malformed_tags" in issue_codes or "malformed_history" in issue_codes:
+        planned_actions.append("normalize_account_fields")
+    if "missing_setup_file" in issue_codes:
+        planned_actions.append("rebuild_setup_link_if_recoverable")
+
+    report = {
+        "applied": apply,
+        "issues": check["issues"],
+        "actions": planned_actions,
+        "fixed": {
+            "removed_dangling_files": 0,
+            "normalized_accounts": 0,
+            "rebuilt_setup_link": 0,
+        },
+    }
+
+    if not apply:
+        return report
+
+    if "missing_setup_file" in issue_codes:
+        candidate = _discover_profile_file_from_vault()
+        if candidate and _rebuild_setup_link(candidate):
+            report["fixed"]["rebuilt_setup_link"] = 1
+
+    engine = get_profile_engine()
+    if not engine:
+        return report
+
+    raw = engine.read() or {}
+    if not isinstance(raw, dict):
+        return report
+
+    files = raw.get("files", [])
+    if isinstance(files, list):
+        new_files = []
+        for file in files:
+            if not isinstance(file, dict):
+                new_files.append(file)
+                continue
+            location = file.get("location")
+            if location and not Path(location).exists():
+                report["fixed"]["removed_dangling_files"] += 1
+                continue
+            new_files.append(file)
+        raw["files"] = new_files
+
+    accounts = raw.get("accounts", [])
+    if isinstance(accounts, list):
+        for account in accounts:
+            if not isinstance(account, dict):
+                continue
+            changed = False
+
+            tags = account.get("tags", [])
+            if not isinstance(tags, list):
+                tags = _split_tags(str(tags))
+                account["tags"] = tags
+                changed = True
+            else:
+                normalized_tags = _normalize_tags([str(tag) for tag in tags])
+                if normalized_tags != tags:
+                    account["tags"] = normalized_tags
+                    changed = True
+
+            history = account.get("history", [])
+            normalized_history = _validate_history_entries(history)
+            if normalized_history != history:
+                account["history"] = normalized_history
+                changed = True
+
+            if changed:
+                report["fixed"]["normalized_accounts"] += 1
+
+    if any(value > 0 for value in report["fixed"].values()):
+        engine.write(raw)
+        audit("vault.repaired", fixed=report["fixed"])
+
+    return report
+
+
+def set_account_note(id: str | int, note: str):
+    engine = get_profile_engine()
+    if not engine:
+        error(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+        )
+        exit(1)
+    data = engine.read()
+    if not data:
+        error(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+        )
+        exit(1)
+
+    profile = Profile(**data)
+    account = profile.get_account(id)
+    if not account:
+        error(
+            f"Account [bold]{id}[/bold] not found. "
+            "Run [bold]onilock list[/bold] to see available accounts."
+        )
+        exit(1)
+
+    cipher = Fernet(settings.SECRET_KEY.encode())
+    encrypted_note = cipher.encrypt(note.encode())
+    account.notes = base64.b64encode(encrypted_note).decode()
+    engine.write(profile.model_dump())
+    audit("account.notes.set", account=account.id)
+    return {"id": account.id, "updated": True}
+
+
+def get_account_note(id: str | int):
+    engine = get_profile_engine()
+    if not engine:
+        error(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+        )
+        exit(1)
+    data = engine.read()
+    if not data:
+        error(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+        )
+        exit(1)
+
+    profile = Profile(**data)
+    account = profile.get_account(id)
+    if not account:
+        error(
+            f"Account [bold]{id}[/bold] not found. "
+            "Run [bold]onilock list[/bold] to see available accounts."
+        )
+        exit(1)
+
+    if not account.notes:
+        return {"id": account.id, "note": ""}
+
+    cipher = Fernet(settings.SECRET_KEY.encode())
+    encrypted_note = base64.b64decode(account.notes)
+    note = cipher.decrypt(encrypted_note).decode()
+    return {"id": account.id, "note": note}
+
+
+def clear_account_note(id: str | int):
+    engine = get_profile_engine()
+    if not engine:
+        error(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+        )
+        exit(1)
+    data = engine.read()
+    if not data:
+        error(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+        )
+        exit(1)
+
+    profile = Profile(**data)
+    account = profile.get_account(id)
+    if not account:
+        error(
+            f"Account [bold]{id}[/bold] not found. "
+            "Run [bold]onilock list[/bold] to see available accounts."
+        )
+        exit(1)
+
+    account.notes = None
+    engine.write(profile.model_dump())
+    audit("account.notes.cleared", account=account.id)
+    return {"id": account.id, "cleared": True}
+
+
+def _normalize_tags(tags: Iterable[str]) -> list[str]:
+    normalized = {
+        str(tag).strip().lower()
+        for tag in tags
+        if str(tag).strip()
+    }
+    return sorted(normalized)
+
+
+def add_account_tags(id: str | int, tags: list[str]):
+    engine = get_profile_engine()
+    if not engine:
+        error(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+        )
+        exit(1)
+    data = engine.read()
+    if not data:
+        error(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+        )
+        exit(1)
+
+    profile = Profile(**data)
+    account = profile.get_account(id)
+    if not account:
+        error(
+            f"Account [bold]{id}[/bold] not found. "
+            "Run [bold]onilock list[/bold] to see available accounts."
+        )
+        exit(1)
+
+    existing_tags = getattr(account, "tags", []) or []
+    account.tags = _normalize_tags([*existing_tags, *tags])
+    engine.write(profile.model_dump())
+    audit("account.tags.added", account=account.id, tags=account.tags)
+    return {"id": account.id, "tags": account.tags}
+
+
+def remove_account_tags(id: str | int, tags: list[str]):
+    engine = get_profile_engine()
+    if not engine:
+        error(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+        )
+        exit(1)
+    data = engine.read()
+    if not data:
+        error(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+        )
+        exit(1)
+
+    profile = Profile(**data)
+    account = profile.get_account(id)
+    if not account:
+        error(
+            f"Account [bold]{id}[/bold] not found. "
+            "Run [bold]onilock list[/bold] to see available accounts."
+        )
+        exit(1)
+
+    to_remove = set(_normalize_tags(tags))
+    existing_tags = _normalize_tags(getattr(account, "tags", []) or [])
+    account.tags = [tag for tag in existing_tags if tag not in to_remove]
+    engine.write(profile.model_dump())
+    audit("account.tags.removed", account=account.id, tags=list(to_remove))
+    return {"id": account.id, "tags": account.tags}
+
+
+def list_account_tags(id: str | int | None = None):
+    engine = get_profile_engine()
+    if not engine:
+        info(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+        )
+        return [] if id is None else {"id": str(id), "tags": []}
+    data = engine.read()
+    if not data:
+        info(
+            "This vault is not initialized. Run [bold]onilock initialize-vault[/bold] first."
+        )
+        return [] if id is None else {"id": str(id), "tags": []}
+
+    profile = Profile(**data)
+    if id is None:
+        return [
+            {"id": account.id, "tags": _normalize_tags(getattr(account, "tags", []) or [])}
+            for account in profile.accounts
+            if _normalize_tags(getattr(account, "tags", []) or [])
+        ]
+
+    account = profile.get_account(id)
+    if not account:
+        error(
+            f"Account [bold]{id}[/bold] not found. "
+            "Run [bold]onilock list[/bold] to see available accounts."
+        )
+        exit(1)
+    return {"id": account.id, "tags": _normalize_tags(getattr(account, "tags", []) or [])}
 
 
 @pre_post_hooks(pre_command, post_command)
@@ -576,11 +1877,16 @@ def rotate_secret_key():
     cipher_old = Fernet(old_key.encode())
     cipher_new = Fernet(new_key.encode())
 
+    def _reencrypt(value: str) -> str:
+        decrypted = cipher_old.decrypt(base64.b64decode(value))
+        return base64.b64encode(cipher_new.encrypt(decrypted)).decode()
+
     for account in profile.accounts:
-        encrypted_password = base64.b64decode(account.encrypted_password)
-        decrypted_password = cipher_old.decrypt(encrypted_password)
-        reencrypted = cipher_new.encrypt(decrypted_password)
-        account.encrypted_password = base64.b64encode(reencrypted).decode()
+        account.encrypted_password = _reencrypt(account.encrypted_password)
+        if account.notes:
+            account.notes = _reencrypt(account.notes)
+        for version in account.history:
+            version.encrypted_password = _reencrypt(version.encrypted_password)
 
     engine.write(profile.model_dump())
 

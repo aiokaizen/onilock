@@ -5,6 +5,12 @@ from onilock.core.logging_manager import logger
 from onilock.core.utils import naive_utcnow
 
 
+class PasswordVersion(BaseModel):
+    encrypted_password: str = Field(description="Encrypted previous password")
+    created_at: int = Field(description="Version creation date")
+    reason: str = Field(description="Why this version was recorded")
+
+
 # @TODO : Rename to Account
 class Account(BaseModel):
     id: str = Field(description="Password Identification")
@@ -13,6 +19,13 @@ class Account(BaseModel):
     is_weak_password: bool = Field(default=True, description="Password is weak")
     url: Optional[str] = Field(default=None, description="URL or Service name")
     description: Optional[str] = Field(default=None, description="Description")
+    notes: Optional[str] = Field(
+        default=None, description="Encrypted account notes (base64 Fernet token)"
+    )
+    tags: List[str] = Field(default_factory=list, description="Normalized tags")
+    history: List[PasswordVersion] = Field(
+        default_factory=list, description="Encrypted password version history"
+    )
     created_at: int = Field(description="Creation date")
 
 
@@ -29,6 +42,8 @@ class Profile(BaseModel):
     name: str
     master_password: str = Field(description="Hashed Master Password")
     vault_version: str = Field(default="", description="Vault version")
+    pin_hash: Optional[str] = Field(default=None, description="Hashed 4-digit PIN")
+    pin_enabled: bool = Field(default=False, description="Whether PIN gate is enabled")
     creation_timestamp: float = Field(
         default=naive_utcnow().timestamp(), description="Creation time"
     )

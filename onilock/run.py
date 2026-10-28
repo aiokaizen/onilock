@@ -3,6 +3,7 @@ import sys
 import os
 import json
 import base64
+from datetime import datetime
 import zipfile
 import io
 import hashlib
@@ -23,12 +24,34 @@ from onilock.db import DatabaseManager
 from onilock.db.engines import EncryptedJsonEngine
 from onilock.filemanager import FileEncryptionManager, get_output_filename
 from onilock.account_manager import (
+    add_account_tags,
+    clear_account_note,
     copy_account_password,
     delete_profile,
+    get_account_history,
+    get_accounts_payload,
+    get_files_payload,
+    get_password_health_report,
+    import_secrets,
+    is_profile_unlocked,
+    list_account_tags,
     get_profile_engine,
+    get_account_secret,
+    get_account_note,
     initialize,
     list_accounts,
     list_files,
+    pin_unlock_required,
+    remove_account_tags,
+    verify_master_password,
+    require_unlock_if_enabled,
+    reset_profile_pin,
+    search_accounts,
+    set_account_note,
+    vault_check,
+    vault_repair,
+    rotate_account_password,
+    unlock_with_pin,
     remove_account as am_remove_account,
     new_account,
     rotate_secret_key,
@@ -52,6 +75,10 @@ from cryptography.hazmat.backends import default_backend
 app = typer.Typer()
 profiles_app = typer.Typer()
 keys_app = typer.Typer()
+notes_app = typer.Typer()
+tags_app = typer.Typer()
+pin_app = typer.Typer()
+vault_app = typer.Typer()
 filemanager = FileEncryptionManager()
 
 
@@ -93,10 +120,26 @@ def _decrypt_export(payload: bytes, passphrase: str) -> bytes:
     return Fernet(key).decrypt(token)
 
 
+def _prompt_new_pin(text: str) -> str:
+    """Prompt twice for a new PIN without echoing it. Empty means no PIN."""
+    return typer.prompt(
+        text,
+        default="",
+        show_default=False,
+        hide_input=True,
+        confirmation_prompt=True,
+    )
+
+
 @app.command(rich_help_panel="Vault")
 @exception_handler
 def initialize_vault(
     master_password: Optional[str] = None,
+    pin: Optional[str] = typer.Option(
+        None,
+        "--pin",
+        help="Optional 4-digit unlock PIN. Leave empty to disable.",
+    ),
 ):
     """
     Initialize a password manager onilock profile.
@@ -137,7 +180,10 @@ def initialize_vault(
         )
         master_password = typer.prompt("Master password", default="", hide_input=True)
 
-    master_password = initialize(master_password)
+    if pin is None and sys.stdin.isatty():
+        pin = _prompt_new_pin("Optional 4-digit PIN (leave empty to disable)")
+
+    master_password = initialize(master_password, pin=pin)
 
     # Offer the tools some commands rely on while the user is setting up.
     ensure_installed(system_dependencies())
@@ -161,6 +207,7 @@ def new(
     """
     Add a new account to OniLock.
     """
+    require_unlock_if_enabled()
     return new_account(name, password, username, url, description)
 
 
@@ -174,6 +221,7 @@ def encrypt_file(file_id: str, filename: str):
         file_id (str): Identifier to use when reading or decrypting the file.
         filename (str): Path to the file to encrypt.
     """
+    require_unlock_if_enabled()
     filemanager.encrypt(file_id, filename)
 
 
@@ -186,6 +234,7 @@ def read_file(file_id: str):
     Args:
         file_id (str): File identifier.
     """
+    require_unlock_if_enabled()
     filemanager.read(file_id)
 
 
@@ -198,6 +247,7 @@ def edit_file(file_id: str):
     Args:
         file_id (str): File identifier.
     """
+    require_unlock_if_enabled()
     filemanager.open(file_id)
 
 
@@ -210,6 +260,7 @@ def delete_file(file_id: str):
     Args:
         file_id (str): File identifier.
     """
+    require_unlock_if_enabled()
     typer.confirm(
         f"Delete '{file_id}' from vault? This cannot be undone.",
         abort=True,
@@ -227,6 +278,7 @@ def export_file(file_id: str, output: Optional[str] = None):
         file_id (str): File identifier.
         output (str): Destination path (defaults to current directory).
     """
+    require_unlock_if_enabled()
     filemanager.export(file_id, output)
 
 
@@ -239,6 +291,7 @@ def export_all_files(output: Optional[str] = None):
     Args:
         output (str): Destination zip file path (defaults to current directory).
     """
+    require_unlock_if_enabled()
     filemanager.export(file_path=output)
 
 
@@ -253,6 +306,7 @@ def backup(
     """
     Create an encrypted backup of the vault.
     """
+    require_unlock_if_enabled()
     settings.BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     default_name = (
         settings.BACKUP_DIR
@@ -282,6 +336,7 @@ def restore(
     """
     Restore a vault backup.
     """
+    require_unlock_if_enabled()
     import_vault(path, passwords=True, files=True, verify=True, replace=replace, passphrase=passphrase)
 
 
@@ -306,6 +361,7 @@ def import_vault(
     """
     Import a vault export (zip or encrypted JSON export).
     """
+    require_unlock_if_enabled()
     engine = get_profile_engine()
     if not engine:
         console.print(
@@ -358,6 +414,7 @@ def import_vault(
                     )
                     continue
                 encrypted_password = cipher.encrypt(account["password"].encode())
+                notes = account.get("notes")
                 profile.accounts.append(
                     Account(
                         id=account_id,
@@ -365,6 +422,12 @@ def import_vault(
                         username=account.get("username", ""),
                         url=account.get("url"),
                         description=account.get("description"),
+                        notes=(
+                            base64.b64encode(cipher.encrypt(notes.encode())).decode()
+                            if notes
+                            else None
+                        ),
+                        tags=account.get("tags", []),
                         created_at=account.get("created_at", int(naive_utcnow().timestamp())),
                         is_weak_password=account.get("is_weak_password", False),
                     )
@@ -411,6 +474,42 @@ def import_vault(
         audit("vault.imported", source=path, passwords=passwords, files=files, replace=replace)
 
 
+@app.command("import-secrets", rich_help_panel="Vault")
+@exception_handler
+def import_secrets_cmd(
+    format_name: str = typer.Option(
+        ...,
+        "--format",
+        help="Import format: csv or keepass-xml.",
+    ),
+    path: str = typer.Option(..., "--path", help="Path to import source file."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Preview without writing."),
+    replace_existing: bool = typer.Option(
+        False, "--replace-existing", help="Replace existing accounts with imported values."
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", help="Print machine-readable JSON output."
+    ),
+):
+    """Import secrets from CSV or KeePass XML export."""
+    require_unlock_if_enabled()
+    payload = import_secrets(
+        format_name,
+        path,
+        dry_run=dry_run,
+        replace_existing=replace_existing,
+    )
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+    console.print(
+        "[bold green]✓[/bold green] Import complete "
+        f"(processed={payload['processed']}, created={payload['created']}, "
+        f"updated={payload['updated']}, skipped_existing={payload['skipped_existing']}, "
+        f"invalid={payload['invalid']}, dry_run={payload['dry_run']})."
+    )
+
+
 @app.command(rich_help_panel="Vault")
 @exception_handler
 def export_vault(
@@ -431,6 +530,7 @@ def export_vault(
     """
     Export the entire OniLock vault (accounts + files).
     """
+    require_unlock_if_enabled()
     return _export_vault_impl(
         output=output,
         passwords=passwords,
@@ -448,6 +548,7 @@ def _export_vault_impl(
     passphrase: Optional[str] = None,
 ):
     """Internal implementation for full vault exports."""
+    require_unlock_if_enabled()
     engine = get_profile_engine()
     if not engine:
         console.print(
@@ -487,6 +588,11 @@ def _export_vault_impl(
             decrypted_password = cipher.decrypt(
                 base64.b64decode(encrypted_password)
             ).decode()
+            notes = (
+                cipher.decrypt(base64.b64decode(account.notes)).decode()
+                if account.notes
+                else ""
+            )
             accounts.append(
                 {
                     "id": account.id,
@@ -494,6 +600,8 @@ def _export_vault_impl(
                     "password": decrypted_password,
                     "url": account.url,
                     "description": account.description,
+                    "notes": notes,
+                    "tags": account.tags,
                     "created_at": account.created_at,
                     "is_weak_password": account.is_weak_password,
                 }
@@ -598,17 +706,29 @@ def _export_vault_impl(
 
 @app.command("list", rich_help_panel="Passwords")
 @exception_handler
-def accounts():
+def accounts(
+    json_output: bool = typer.Option(
+        False, "--json", help="Print machine-readable JSON output."
+    ),
+):
     """List all stored accounts."""
-
+    if json_output:
+        typer.echo(json.dumps(get_accounts_payload()))
+        return
     return list_accounts()
 
 
 @app.command("list-files", rich_help_panel="Files")
 @exception_handler
-def list_all_files():
+def list_all_files(
+    json_output: bool = typer.Option(
+        False, "--json", help="Print machine-readable JSON output."
+    ),
+):
     """List all encrypted files stored in the vault."""
-
+    if json_output:
+        typer.echo(json.dumps(get_files_payload()))
+        return
     return list_files()
 
 
@@ -632,6 +752,64 @@ def profiles_use(name: str):
     console.print(
         f"[bold green]✓[/bold green] Active profile set to [bold]{name}[/bold]. "
         "Restart the command to use it."
+    )
+
+
+@vault_app.command("check")
+@exception_handler
+def vault_check_cmd(
+    json_output: bool = typer.Option(
+        False, "--json", help="Print machine-readable JSON output."
+    ),
+):
+    """Check vault metadata and profile integrity."""
+    payload = vault_check()
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+
+    if payload["ok"]:
+        console.print("[bold green]✓[/bold green] Vault integrity check passed.")
+        return
+
+    console.print("[bold yellow]![/bold yellow] Vault integrity issues detected:")
+    for issue in payload["issues"]:
+        console.print(f"- {issue['code']}: {issue.get('message', '')}")
+
+
+@vault_app.command("repair")
+@exception_handler
+def vault_repair_cmd(
+    apply: bool = typer.Option(
+        False, "--apply", help="Apply repair actions. Omit for dry-run preview."
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", help="Print machine-readable JSON output."
+    ),
+):
+    """Repair recoverable vault metadata issues."""
+    if apply:
+        require_unlock_if_enabled()
+
+    payload = vault_repair(apply=apply)
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+
+    if not apply:
+        console.print(
+            "[bold cyan]Repair Plan[/bold cyan] "
+            f"(actions={len(payload['actions'])}, issues={len(payload['issues'])})"
+        )
+        for action in payload["actions"]:
+            console.print(f"- {action}")
+        return
+
+    console.print(
+        "[bold green]✓[/bold green] Repair completed "
+        f"(removed_dangling_files={payload['fixed']['removed_dangling_files']}, "
+        f"normalized_accounts={payload['fixed']['normalized_accounts']}, "
+        f"rebuilt_setup_link={payload['fixed']['rebuilt_setup_link']})."
     )
 
 
@@ -786,12 +964,427 @@ def copy(name: str):
 
     NAME can be the account name or its 1-based index from `onilock list`.
     """
+    require_unlock_if_enabled()
     account_id: str | int = name
     try:
         account_id = int(account_id) - 1
     except ValueError:
         pass
     return copy_account_password(account_id)
+
+
+@app.command(rich_help_panel="Passwords")
+@exception_handler
+def search(
+    query: str,
+    limit: int = typer.Option(10, "--limit", min=1, help="Maximum results."),
+    json_output: bool = typer.Option(
+        False, "--json", help="Print machine-readable JSON output."
+    ),
+):
+    """
+    Fuzzy-search accounts by id, username, URL, description, and tags.
+    """
+    results = search_accounts(query, limit=limit)
+    if json_output:
+        typer.echo(json.dumps(results))
+        return
+
+    if not results:
+        console.print("[bold yellow]![/bold yellow] No accounts matched your query.")
+        return
+
+    from rich.table import Table
+
+    table = Table(title=f"Search Results — '{query}'", show_lines=True)
+    table.add_column("#", style="dim", justify="right")
+    table.add_column("Name", style="bold cyan")
+    table.add_column("Username", style="green")
+    table.add_column("URL", style="blue")
+    table.add_column("Description", style="dim")
+    table.add_column("Score", style="magenta", justify="right")
+
+    for item in results:
+        table.add_row(
+            str(item["rank"]),
+            item["id"],
+            item["username"] or "—",
+            item["url"] or "—",
+            item["description"] or "—",
+            f'{item["score"]:.4f}',
+        )
+    console.print(table)
+
+
+@app.command(rich_help_panel="Passwords")
+@exception_handler
+def show(
+    name: str,
+    json_output: bool = typer.Option(
+        False, "--json", help="Print machine-readable JSON output."
+    ),
+):
+    """
+    Print a decrypted account secret.
+    """
+    require_unlock_if_enabled()
+    account_id: str | int = name
+    try:
+        account_id = int(account_id) - 1
+    except ValueError:
+        pass
+
+    payload = get_account_secret(account_id)
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+
+    console.print(
+        Panel(
+            "\n".join(
+                [
+                    f"[dim]Account:[/dim] [bold]{payload['id']}[/bold]",
+                    f"[dim]Username:[/dim] {payload['username'] or '—'}",
+                    f"[dim]URL:[/dim] {payload['url'] or '—'}",
+                    f"[bold red]Password:[/bold red] {payload['password']}",
+                ]
+            ),
+            title="[yellow]Decrypted Secret[/yellow]",
+            border_style="yellow",
+        )
+    )
+
+
+@app.command(rich_help_panel="Passwords")
+@exception_handler
+def history(
+    name: str,
+    limit: int = typer.Option(10, "--limit", min=1, help="Maximum history entries."),
+    json_output: bool = typer.Option(
+        False, "--json", help="Print machine-readable JSON output."
+    ),
+):
+    """Show password version history for an account."""
+    account_id: str | int = name
+    try:
+        account_id = int(account_id) - 1
+    except ValueError:
+        pass
+
+    payload = get_account_history(account_id, limit=limit)
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+
+    entries = payload["history"]
+    if not entries:
+        console.print(
+            f"[bold yellow]![/bold yellow] No password history for [bold]{payload['id']}[/bold]."
+        )
+        return
+
+    from rich.table import Table
+
+    table = Table(title=f"Password History — {payload['id']}", show_lines=True)
+    table.add_column("#", style="dim", justify="right")
+    table.add_column("When", style="cyan")
+    table.add_column("Reason", style="magenta")
+    for item in entries:
+        table.add_row(
+            str(item["index"]),
+            datetime.fromtimestamp(item["created_at"]).strftime("%Y-%m-%d %H:%M"),
+            item["reason"],
+        )
+    console.print(table)
+
+
+@app.command(rich_help_panel="Passwords")
+@exception_handler
+def rotate(
+    name: str,
+    len: int = typer.Option(20, "--len", min=4, help="Generated password length."),
+    special_chars: bool = typer.Option(
+        True,
+        "--special-chars/--no-special-chars",
+        help="Include special characters in the generated password.",
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", help="Print machine-readable JSON output."
+    ),
+):
+    """Rotate an account password and keep the previous value in history."""
+    require_unlock_if_enabled()
+    account_id: str | int = name
+    try:
+        account_id = int(account_id) - 1
+    except ValueError:
+        pass
+
+    payload = rotate_account_password(
+        account_id,
+        length=len,
+        include_special_chars=special_chars,
+    )
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+
+    health = "weak" if payload["is_weak_password"] else "strong"
+    console.print(
+        f"[bold green]✓[/bold green] Rotated password for [bold]{payload['id']}[/bold] "
+        f"(history entries: {payload['history_size']}, health: {health})."
+    )
+
+
+@app.command(rich_help_panel="Passwords")
+@exception_handler
+def health(
+    account: Optional[str] = typer.Argument(
+        None, help="Account name/index. Omit when using --all."
+    ),
+    all: bool = typer.Option(False, "--all", help="Report health for all accounts."),
+    json_output: bool = typer.Option(
+        False, "--json", help="Print machine-readable JSON output."
+    ),
+):
+    """Show password health for one account or the whole vault."""
+    account_id: str | int | None = account
+    if account and not all:
+        try:
+            account_id = int(account) - 1
+        except ValueError:
+            pass
+
+    payload = get_password_health_report(account_id, all_accounts=all)
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+
+    if all:
+        from rich.table import Table
+
+        summary = payload["summary"]
+        console.print(
+            f"[bold]Accounts:[/bold] {summary['total']}  "
+            f"[green]strong:[/green] {summary['strong']}  "
+            f"[yellow]weak:[/yellow] {summary['weak']}"
+        )
+        table = Table(title="Password Health", show_lines=True)
+        table.add_column("Account", style="bold cyan")
+        table.add_column("Strength", style="magenta")
+        table.add_column("Entropy", style="green", justify="right")
+        table.add_column("Reasons", style="dim")
+        for item in payload["accounts"]:
+            table.add_row(
+                item["id"],
+                item["strength"],
+                f'{item["entropy_bits"]:.1f}',
+                "; ".join(item["reasons"]) if item["reasons"] else "—",
+            )
+        console.print(table)
+        return
+
+    health_payload = payload["health"]
+    console.print(
+        f"[bold cyan]{payload['id']}[/bold cyan] "
+        f"strength={health_payload['strength']} "
+        f"entropy={health_payload['entropy_bits']:.1f}"
+    )
+
+
+@app.command(rich_help_panel="Passwords")
+@exception_handler
+def unlock(
+    pin: Optional[str] = typer.Option(
+        None,
+        "--pin",
+        help="4-digit PIN. If omitted in TTY mode, you will be prompted.",
+    )
+):
+    """Unlock a PIN-protected profile for a short session."""
+    value = pin
+    if value is None:
+        if not sys.stdin.isatty():
+            console.print(
+                "[bold red]✗[/bold red] PIN is required in non-interactive mode. "
+                "Provide [bold]--pin[/bold]."
+            )
+            raise SystemExit(1)
+        value = typer.prompt("PIN", hide_input=True)
+
+    payload = unlock_with_pin(value)
+    if not payload.get("pin_enabled", True):
+        console.print("[bold yellow]![/bold yellow] PIN is disabled for this profile.")
+        return
+    console.print(
+        f"[bold green]✓[/bold green] Profile unlocked for {payload['ttl_sec']} seconds."
+    )
+
+
+@pin_app.command("reset")
+@exception_handler
+def pin_reset(
+    pin: Optional[str] = typer.Option(
+        None,
+        "--pin",
+        help="4-digit PIN. Pass an empty value to disable PIN.",
+    ),
+    master_password: Optional[str] = typer.Option(
+        None,
+        "--master-password",
+        help="Needed to change an existing PIN while the vault is locked.",
+    ),
+):
+    """Set, change, or disable the profile PIN."""
+    if master_password is None and pin_unlock_required():
+        if not sys.stdin.isatty():
+            console.print(
+                "[bold red]✗[/bold red] The vault is locked. Run [bold]onilock unlock[/bold] "
+                "first or pass [bold]--master-password[/bold]."
+            )
+            raise SystemExit(1)
+        master_password = typer.prompt("Master password", hide_input=True)
+        # Check it now so a typo doesn't cost the user two PIN prompts.
+        if not verify_master_password(master_password):
+            console.print("[bold red]✗[/bold red] Wrong master password.")
+            raise SystemExit(1)
+
+    value = pin
+    if value is None:
+        if not sys.stdin.isatty():
+            console.print(
+                "[bold red]✗[/bold red] Provide [bold]--pin[/bold] in non-interactive mode."
+            )
+            raise SystemExit(1)
+        value = _prompt_new_pin("New 4-digit PIN (leave empty to disable)")
+
+    payload = reset_profile_pin(value, master_password=master_password)
+    if payload["pin_enabled"]:
+        console.print("[bold green]✓[/bold green] PIN updated.")
+    else:
+        console.print("[bold green]✓[/bold green] PIN disabled.")
+
+
+@notes_app.command("set")
+@exception_handler
+def notes_set(
+    account: str,
+    text: Optional[str] = typer.Option(
+        None, "--text", help="Note text content."
+    ),
+    note_file: Optional[str] = typer.Option(
+        None, "--file", help="Path to a file containing note text."
+    ),
+):
+    """Set an encrypted note on an account."""
+    require_unlock_if_enabled()
+    if text and note_file:
+        console.print("[bold red]✗[/bold red] Use either --text or --file, not both.")
+        raise SystemExit(1)
+    if not text and not note_file:
+        console.print("[bold red]✗[/bold red] Provide --text or --file.")
+        raise SystemExit(1)
+
+    note = text
+    if note_file:
+        note = Path(note_file).read_text()
+
+    set_account_note(account, note or "")
+    console.print(f"[bold green]✓[/bold green] Note set for [bold]{account}[/bold].")
+
+
+@notes_app.command("get")
+@exception_handler
+def notes_get(
+    account: str,
+    json_output: bool = typer.Option(
+        False, "--json", help="Print machine-readable JSON output."
+    ),
+):
+    """Get an account note."""
+    require_unlock_if_enabled()
+    payload = get_account_note(account)
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+
+    console.print(
+        Panel(
+            payload["note"] or "",
+            title=f"[cyan]Notes — {payload['id']}[/cyan]",
+            border_style="cyan",
+        )
+    )
+
+
+@notes_app.command("clear")
+@exception_handler
+def notes_clear(account: str):
+    """Clear an account note."""
+    require_unlock_if_enabled()
+    clear_account_note(account)
+    console.print(
+        f"[bold green]✓[/bold green] Note cleared for [bold]{account}[/bold]."
+    )
+
+
+@tags_app.command("add")
+@exception_handler
+def tags_add(account: str, tags: list[str]):
+    """Add one or more tags to an account."""
+    payload = add_account_tags(account, tags)
+    console.print(
+        f"[bold green]✓[/bold green] Tags updated for [bold]{payload['id']}[/bold]: "
+        f"{', '.join(payload['tags']) or '—'}"
+    )
+
+
+@tags_app.command("remove")
+@exception_handler
+def tags_remove(account: str, tags: list[str]):
+    """Remove one or more tags from an account."""
+    payload = remove_account_tags(account, tags)
+    console.print(
+        f"[bold green]✓[/bold green] Tags updated for [bold]{payload['id']}[/bold]: "
+        f"{', '.join(payload['tags']) or '—'}"
+    )
+
+
+@tags_app.command("list")
+@exception_handler
+def tags_list(
+    account: Optional[str] = typer.Argument(
+        None, help="Account name. Omit to list tags for all accounts."
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", help="Print machine-readable JSON output."
+    ),
+):
+    """List tags for one account or all accounts."""
+    payload = list_account_tags(account)
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+
+    if account:
+        tags = payload.get("tags", [])
+        console.print(
+            f"[bold cyan]{payload['id']}[/bold cyan]: {', '.join(tags) if tags else '—'}"
+        )
+        return
+
+    if not payload:
+        console.print("[bold yellow]![/bold yellow] No tags found.")
+        return
+
+    from rich.table import Table
+
+    table = Table(title="Account Tags", show_lines=True)
+    table.add_column("Account", style="bold cyan")
+    table.add_column("Tags", style="green")
+    for item in payload:
+        table.add_row(item["id"], ", ".join(item["tags"]) if item["tags"] else "—")
+    console.print(table)
 
 
 @keys_app.command("list")
@@ -857,6 +1450,7 @@ def remove_account(name: str):
     Args:
         name (str): Account name.
     """
+    require_unlock_if_enabled()
     typer.confirm(f"Remove account '{name}'?", abort=True)
     return am_remove_account(name)
 
@@ -880,58 +1474,206 @@ def generate_pwd(
     )
 
 
-@app.command(rich_help_panel="Utilities")
-@exception_handler
-def doctor():
-    """
-    Diagnose environment and configuration issues.
-    """
-    checks = []
+def _can_create_in(path: Path) -> bool:
+    """True if path is writable, or could be created (it's made on first use)."""
+    while not path.exists() and path != path.parent:
+        path = path.parent
+    return os.access(path, os.W_OK)
 
-    # Vault dir
+
+def _collect_doctor_payload(verbose: bool = False) -> dict:
+    checks = []
+    active_profile = get_active_profile() or settings.DB_NAME
+    setup_path = Path(settings.SETUP_FILEPATH)
+    backup_dir = Path(settings.BACKUP_DIR)
+    audit_parent = Path(settings.AUDIT_LOG).parent
+
+    profile_data = {}
+    pin_enabled = False
+    profile_engine = get_profile_engine()
+    if profile_engine:
+        try:
+            profile_data = profile_engine.read() or {}
+        except Exception:
+            profile_data = {}
+    if isinstance(profile_data, dict):
+        pin_enabled = bool(profile_data.get("pin_enabled", False))
+
     checks.append(
-        ("Vault dir writable", os.access(settings.VAULT_DIR, os.W_OK))
+        {
+            "name": "vault_dir_writable",
+            "ok": os.access(settings.VAULT_DIR, os.W_OK),
+            "detail": str(settings.VAULT_DIR) if verbose else "",
+        }
+    )
+    checks.append(
+        {
+            "name": "backup_dir_writable",
+            "ok": _can_create_in(backup_dir),
+            "detail": str(backup_dir) if verbose else "",
+        }
+    )
+    checks.append(
+        {
+            "name": "audit_dir_writable",
+            "ok": os.access(audit_parent, os.W_OK),
+            "detail": str(audit_parent) if verbose else "",
+        }
+    )
+    checks.append(
+        {
+            "name": "setup_file_exists",
+            "ok": setup_path.exists(),
+            "detail": str(setup_path) if verbose else "",
+        }
+    )
+    checks.append(
+        {
+            "name": "profile_data_readable",
+            "ok": bool(profile_data and isinstance(profile_data, dict)),
+            "detail": "profile payload loaded" if verbose and profile_data else "",
+        }
     )
 
-    # GPG home
     if settings.GPG_HOME:
-        checks.append(("GPG home writable", os.access(settings.GPG_HOME, os.W_OK)))
-    else:
-        checks.append(("GPG home configured", False))
+        checks.append(
+            {
+                "name": "gpg_home_writable",
+                "ok": os.access(settings.GPG_HOME, os.W_OK),
+                "detail": settings.GPG_HOME if verbose else "",
+            }
+        )
 
     # System tools (gpg, clipboard tool, vim)
     for dep in system_dependencies():
-        checks.append((f"{dep.name} installed", dep.is_installed()))
+        checks.append(
+            {
+                "name": f"{dep.binaries[0]}_installed",
+                "ok": dep.is_installed(),
+                "detail": dep.purpose if verbose else "",
+            }
+        )
 
-    # gpg-agent
     try:
         import subprocess
 
-        subprocess.run(["gpgconf", "--launch", "gpg-agent"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        checks.append(("gpg-agent running", True))
-    except Exception:
-        checks.append(("gpg-agent running", False))
+        subprocess.run(
+            ["gpgconf", "--launch", "gpg-agent"],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        checks.append({"name": "gpg_agent_running", "ok": True, "detail": ""})
+    except Exception as exc:
+        checks.append(
+            {
+                "name": "gpg_agent_running",
+                "ok": False,
+                "detail": str(exc) if verbose else "",
+            }
+        )
 
-    # Keyring backend
     try:
         import keyring
 
         keyring.get_password("onilock", "doctor")
-        checks.append(("keyring backend available", True))
-    except Exception:
-        checks.append(("keyring backend available", False))
+        checks.append({"name": "keyring_backend_available", "ok": True, "detail": ""})
+    except Exception as exc:
+        checks.append(
+            {
+                "name": "keyring_backend_available",
+                "ok": False,
+                "detail": str(exc) if verbose else "",
+            }
+        )
 
-    # Clipboard
     try:
         from onilock.core.utils import clipboard_available
 
-        checks.append(("clipboard available", clipboard_available() and settings.CLIPBOARD_ENABLED))
-    except Exception:
-        checks.append(("clipboard available", False))
+        checks.append(
+            {
+                "name": "clipboard_available",
+                "ok": clipboard_available() and settings.CLIPBOARD_ENABLED,
+                "detail": "" if not verbose else f"enabled={settings.CLIPBOARD_ENABLED}",
+            }
+        )
+    except Exception as exc:
+        checks.append(
+            {
+                "name": "clipboard_available",
+                "ok": False,
+                "detail": str(exc) if verbose else "",
+            }
+        )
+    keystore_backend = "unknown"
+    try:
+        manager = KeyStoreManager(settings.DB_NAME)
+        persisted = manager._get_persisted_backend(settings.DB_NAME)
+        keystore_backend = persisted or manager.keystore.__class__.__name__.lower()
+        checks.append(
+            {
+                "name": "keystore_backend_resolved",
+                "ok": True,
+                "detail": keystore_backend if verbose else "",
+            }
+        )
+    except Exception as exc:
+        checks.append(
+            {
+                "name": "keystore_backend_resolved",
+                "ok": False,
+                "detail": str(exc) if verbose else "",
+            }
+        )
 
-    for label, ok in checks:
-        status = "[bold green]OK[/bold green]" if ok else "[bold red]FAIL[/bold red]"
-        console.print(f"{status} {label}")
+    unlock_required = pin_enabled
+    unlocked = is_profile_unlocked(active_profile) if unlock_required else True
+
+    return {
+        "ok": all(item["ok"] for item in checks),
+        "profile": {
+            "active": active_profile,
+            "pin_enabled": pin_enabled,
+        },
+        "unlock": {
+            "required": unlock_required,
+            "unlocked": unlocked,
+        },
+        "keystore": {
+            "backend": keystore_backend,
+        },
+        "checks": checks,
+    }
+
+
+@app.command(rich_help_panel="Utilities")
+@exception_handler
+def doctor(
+    verbose: bool = typer.Option(False, "--verbose", help="Include diagnostic details."),
+    json_output: bool = typer.Option(
+        False, "--json", help="Print machine-readable JSON output."
+    ),
+):
+    """
+    Diagnose environment and configuration issues.
+    """
+    payload = _collect_doctor_payload(verbose=verbose)
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+
+    console.print(
+        f"[bold]Profile:[/bold] {payload['profile']['active']}  "
+        f"[bold]PIN enabled:[/bold] {payload['profile']['pin_enabled']}  "
+        f"[bold]Unlocked:[/bold] {payload['unlock']['unlocked']}  "
+        f"[bold]Keystore:[/bold] {payload['keystore']['backend']}"
+    )
+    for item in payload["checks"]:
+        status = "[bold green]OK[/bold green]" if item["ok"] else "[bold red]FAIL[/bold red]"
+        line = f"{status} {item['name']}"
+        if verbose and item["detail"]:
+            line += f" ({item['detail']})"
+        console.print(line)
 
     ensure_installed(system_dependencies())
 
@@ -967,6 +1709,7 @@ def erase_user_data(
         "This will permanently delete ALL accounts, files, and keys. Continue?",
         abort=True,
     )
+    require_unlock_if_enabled()
     return delete_profile(master_password)
 
 
@@ -1054,6 +1797,7 @@ def export(
     Args:
         dist (str): Destination path. Defaults to current directory.
     """
+    require_unlock_if_enabled()
     return _export_vault_impl(
         output=dist,
         passwords=passwords,
@@ -1072,6 +1816,10 @@ def main():
 
 app.add_typer(profiles_app, name="profiles", rich_help_panel="Profiles")
 app.add_typer(keys_app, name="keys", rich_help_panel="Keys")
+app.add_typer(notes_app, name="notes", rich_help_panel="Passwords")
+app.add_typer(tags_app, name="tags", rich_help_panel="Passwords")
+app.add_typer(pin_app, name="pin", rich_help_panel="Passwords")
+app.add_typer(vault_app, name="vault", rich_help_panel="Vault")
 
 if __name__ == "__main__":
     app()

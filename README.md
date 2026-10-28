@@ -94,11 +94,102 @@ onilock list
 ```
 Displays all saved accounts.
 
+### 🔹 Search Accounts
+```sh
+onilock search github
+onilock search git --limit 5
+onilock search github --json
+```
+Fuzzy-searches accounts by name, username, URL, description and tags.
+
 ### 🔹 Copy a Password to Clipboard
 ```sh
 onilock copy <account_name>
 ```
 This copies the password to your clipboard securely.
+
+### 🔹 Show a Decrypted Secret
+```sh
+onilock show github
+onilock show 1 --json
+```
+Prints a decrypted secret intentionally for inspection/scripting.
+
+### 🔹 Account Notes
+```sh
+onilock notes set github --text "Production deployment credentials"
+onilock notes get github
+onilock notes clear github
+```
+Stores and retrieves encrypted per-account notes.
+
+### 🔹 Account Tags
+```sh
+onilock tags add github prod infra
+onilock tags list github
+onilock tags remove github infra
+onilock tags list --json
+```
+Adds, removes, and lists normalized tags per account.
+
+### 🔹 Password History
+```sh
+onilock history github
+onilock history github --limit 5
+onilock history github --json
+```
+Shows stored password version metadata (newest first).
+
+### 🔹 Rotate Password
+```sh
+onilock rotate github
+onilock rotate github --len 24 --no-special-chars
+onilock rotate github --json
+```
+Generates a new password, stores it, and pushes the previous secret into history.
+
+### 🔹 Password Health Report
+```sh
+onilock health github
+onilock health --all
+onilock health --all --json
+```
+Shows health checks for one account or the full vault.
+
+### 🔹 PIN Unlock Sessions
+```sh
+onilock unlock --pin 1234
+onilock pin reset --pin 5678
+```
+Adds an optional 4-digit PIN gate for sensitive commands. Leave PIN empty in `pin reset` to disable.
+Changing or removing a PIN needs an unlocked session or the master password, and too many wrong PINs
+lock PIN entry for a few minutes. The PIN doesn't encrypt anything: it stops casual use of an unlocked
+terminal, not someone with full access to your user account.
+
+### 🔹 Shell-Safe JSON Output
+```sh
+onilock list --json
+onilock list-files --json
+onilock doctor --json
+onilock doctor --verbose
+```
+Use `--json` for scripting and machine-readable output.
+
+### 🔹 Secure Imports
+```sh
+onilock import-secrets --format csv --path ./secrets.csv --dry-run
+onilock import-secrets --format keepass-xml --path ./keepass-export.xml --replace-existing
+```
+Imports secrets from CSV or KeePass XML export, with dry-run preview support.
+
+### 🔹 Vault Integrity Check/Repair
+```sh
+onilock vault check
+onilock vault check --json
+onilock vault repair
+onilock vault repair --apply --json
+```
+Checks for recoverable vault metadata issues and supports dry-run or apply repair flow.
 
 ### 🔹 Remove an Account
 ```sh
@@ -161,6 +252,14 @@ Contributions are welcome! Feel free to submit issues and pull requests.
 
 
 ## 📝 Changelog
+
+### v1.9.0
+- Add `search`, `show`, `rotate`, `history` and `health` commands.
+- Add encrypted per-account notes and per-account tags.
+- Add an optional 4-digit PIN that gates sensitive commands.
+- Add `import-secrets` for CSV and KeePass XML, plus `vault check` and `vault repair`.
+- Add `--json` output to `list`, `list-files` and `doctor`, and expand `doctor`.
+- Include the v1.8.4 macOS and GnuPG fixes.
 
 ### v1.8.4
 - Fix OniLock crashing on start when GnuPG is not installed (the default on macOS). Password commands now work without gpg.

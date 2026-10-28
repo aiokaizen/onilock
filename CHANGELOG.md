@@ -1,5 +1,22 @@
 # Version 1
 
+## v1.9.0
+- Add `search` command with fuzzy account matching, result limits, and JSON output.
+- Add `show` command to print a decrypted secret by account name/index with optional JSON output.
+- Add encrypted per-account notes with `notes set|get|clear` commands.
+- Add per-account tags with `tags add|remove|list` commands and normalized tag handling.
+- Add password version history tracking and `history` command with limits and JSON output.
+- Add `rotate` command to generate/store new account passwords with history integration.
+- Add `health` command for single-account and vault-wide password health reporting.
+- Add optional 4-digit PIN unlock sessions with `unlock` and `pin reset`, and sensitive-command gating. Changing or removing a PIN needs an unlocked session or the master password, and wrong PINs count toward a lockout.
+- Add shell-safe `--json` outputs for `list`, `list-files`, and `doctor` (plus existing JSON-capable commands).
+- Add `import-secrets` for secure CSV and KeePass XML imports with `--dry-run` and duplicate handling. KeePass history entries and the recycle bin are skipped.
+- Include account notes and tags in `export-vault` and `import-vault`.
+- `keys rotate-secret` also re-encrypts notes and password history.
+- Expand `doctor` diagnostics with profile, unlock, keystore, path integrity checks, and verbose output.
+- Add `vault check` and `vault repair` commands with dry-run/apply flows and JSON output.
+- Includes all v1.8.4 fixes.
+
 ## v1.8.4
 - Fix OniLock crashing on start when GnuPG is not installed, which is the default on macOS. gpg now starts only when a command needs it, so password commands work without it.
 - Create the PGP key for file encryption the first time a file is encrypted. New vaults never got one, so `encrypt-file` failed even with gpg installed.

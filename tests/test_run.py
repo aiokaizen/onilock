@@ -1,6 +1,7 @@
 """Tests for onilock.run (CLI commands via typer.testing.CliRunner)."""
 
 import os
+import json
 import unittest
 from unittest.mock import MagicMock, patch
 from pathlib import Path
@@ -61,7 +62,7 @@ class TestInitializeVaultCommand(unittest.TestCase):
             result = runner.invoke(
                 app, ["initialize-vault", "--master-password=strongpassword"]
             )
-        mock_init.assert_called_once_with("strongpassword")
+        mock_init.assert_called_once_with("strongpassword", pin=None)
         self.assertIn("Initialization Targets", result.output)
         self.assertIn("Vault directory", result.output)
 
@@ -148,6 +149,430 @@ class TestCopyCommand(unittest.TestCase):
         with patch("onilock.run.copy_account_password") as mock_copy:
             result = runner.invoke(app, ["copy", "mygithub"])
         mock_copy.assert_called_once_with("mygithub")
+
+
+class TestSearchCommand(unittest.TestCase):
+    def test_search_calls_search_accounts(self):
+        from onilock.run import app
+
+        with patch("onilock.run.search_accounts", return_value=[]) as mock_search:
+            result = runner.invoke(app, ["search", "github", "--limit", "5"])
+
+        self.assertEqual(result.exit_code, 0)
+        mock_search.assert_called_once_with("github", limit=5)
+
+    def test_search_json_output(self):
+        from onilock.run import app
+
+        payload = [
+            {
+                "rank": 1,
+                "id": "github",
+                "username": "octocat",
+                "url": "https://github.com",
+                "description": "code hosting",
+                "score": 1.0,
+            }
+        ]
+        with patch("onilock.run.search_accounts", return_value=payload):
+            result = runner.invoke(app, ["search", "github", "--json"])
+
+        self.assertEqual(result.exit_code, 0)
+        data = json.loads(result.output)
+        self.assertEqual(data[0]["id"], "github")
+
+
+class TestShowCommand(unittest.TestCase):
+    def test_show_by_name(self):
+        from onilock.run import app
+
+        payload = {
+            "id": "github",
+            "username": "octocat",
+            "url": "https://github.com",
+            "password": "supersecret",
+        }
+        with patch("onilock.run.get_account_secret", return_value=payload) as mock_show:
+            result = runner.invoke(app, ["show", "github"])
+
+        self.assertEqual(result.exit_code, 0)
+        mock_show.assert_called_once_with("github")
+        self.assertIn("supersecret", result.output)
+
+    def test_show_json_output(self):
+        from onilock.run import app
+
+        payload = {
+            "id": "github",
+            "username": "octocat",
+            "url": "https://github.com",
+            "password": "supersecret",
+        }
+        with patch("onilock.run.get_account_secret", return_value=payload):
+            result = runner.invoke(app, ["show", "github", "--json"])
+
+        self.assertEqual(result.exit_code, 0)
+        data = json.loads(result.output)
+        self.assertEqual(data["id"], "github")
+        self.assertEqual(data["password"], "supersecret")
+
+
+class TestNotesCommands(unittest.TestCase):
+    def test_notes_set_with_text(self):
+        from onilock.run import app
+
+        with patch("onilock.run.set_account_note") as mock_set:
+            result = runner.invoke(
+                app, ["notes", "set", "github", "--text", "deployment creds"]
+            )
+        self.assertEqual(result.exit_code, 0)
+        mock_set.assert_called_once_with("github", "deployment creds")
+
+    def test_notes_get_json(self):
+        from onilock.run import app
+
+        payload = {"id": "github", "note": "deployment creds"}
+        with patch("onilock.run.get_account_note", return_value=payload):
+            result = runner.invoke(app, ["notes", "get", "github", "--json"])
+        self.assertEqual(result.exit_code, 0)
+        data = json.loads(result.output)
+        self.assertEqual(data["note"], "deployment creds")
+
+    def test_notes_clear(self):
+        from onilock.run import app
+
+        with patch("onilock.run.clear_account_note") as mock_clear:
+            result = runner.invoke(app, ["notes", "clear", "github"])
+        self.assertEqual(result.exit_code, 0)
+        mock_clear.assert_called_once_with("github")
+
+
+class TestTagsCommands(unittest.TestCase):
+    def test_tags_add(self):
+        from onilock.run import app
+
+        with patch("onilock.run.add_account_tags") as mock_add:
+            result = runner.invoke(app, ["tags", "add", "github", "prod", "infra"])
+        self.assertEqual(result.exit_code, 0)
+        mock_add.assert_called_once_with("github", ["prod", "infra"])
+
+    def test_tags_remove(self):
+        from onilock.run import app
+
+        with patch("onilock.run.remove_account_tags") as mock_remove:
+            result = runner.invoke(app, ["tags", "remove", "github", "prod"])
+        self.assertEqual(result.exit_code, 0)
+        mock_remove.assert_called_once_with("github", ["prod"])
+
+    def test_tags_list_json(self):
+        from onilock.run import app
+
+        payload = {"id": "github", "tags": ["prod", "infra"]}
+        with patch("onilock.run.list_account_tags", return_value=payload):
+            result = runner.invoke(app, ["tags", "list", "github", "--json"])
+        self.assertEqual(result.exit_code, 0)
+        data = json.loads(result.output)
+        self.assertEqual(data["tags"], ["prod", "infra"])
+
+
+class TestHistoryCommands(unittest.TestCase):
+    def test_history_json_output(self):
+        from onilock.run import app
+
+        payload = {
+            "id": "github",
+            "history": [
+                {"index": 1, "created_at": 1700000000, "reason": "rotate"},
+                {"index": 2, "created_at": 1699999999, "reason": "replace"},
+            ],
+        }
+        with patch("onilock.run.get_account_history", return_value=payload):
+            result = runner.invoke(app, ["history", "github", "--json"])
+        self.assertEqual(result.exit_code, 0)
+        data = json.loads(result.output)
+        self.assertEqual(data["id"], "github")
+        self.assertEqual(len(data["history"]), 2)
+
+    def test_history_limit_is_forwarded(self):
+        from onilock.run import app
+
+        with patch("onilock.run.get_account_history", return_value={"id": "github", "history": []}) as mock_history:
+            result = runner.invoke(app, ["history", "github", "--limit", "3"])
+        self.assertEqual(result.exit_code, 0)
+        mock_history.assert_called_once_with("github", limit=3)
+
+
+class TestRotateCommands(unittest.TestCase):
+    def test_rotate_calls_manager(self):
+        from onilock.run import app
+
+        payload = {"id": "github", "rotated": True, "history_size": 1}
+        with patch("onilock.run.rotate_account_password", return_value=payload) as mock_rotate:
+            result = runner.invoke(
+                app,
+                ["rotate", "github", "--len", "24", "--no-special-chars"],
+            )
+        self.assertEqual(result.exit_code, 0)
+        mock_rotate.assert_called_once_with(
+            "github",
+            length=24,
+            include_special_chars=False,
+        )
+
+    def test_rotate_json_output(self):
+        from onilock.run import app
+
+        payload = {"id": "github", "rotated": True, "history_size": 1}
+        with patch("onilock.run.rotate_account_password", return_value=payload):
+            result = runner.invoke(app, ["rotate", "github", "--json"])
+        self.assertEqual(result.exit_code, 0)
+        data = json.loads(result.output)
+        self.assertEqual(data["id"], "github")
+        self.assertTrue(data["rotated"])
+
+
+class TestHealthCommands(unittest.TestCase):
+    def test_health_single_account(self):
+        from onilock.run import app
+
+        payload = {
+            "id": "github",
+            "health": {"strength": "strong", "reasons": [], "entropy_bits": 80},
+        }
+        with patch("onilock.run.get_password_health_report", return_value=payload) as mock_health:
+            result = runner.invoke(app, ["health", "github"])
+        self.assertEqual(result.exit_code, 0)
+        mock_health.assert_called_once_with("github", all_accounts=False)
+
+    def test_health_all_json(self):
+        from onilock.run import app
+
+        payload = {
+            "summary": {"total": 2, "strong": 1, "weak": 1},
+            "accounts": [
+                {"id": "github", "strength": "weak"},
+                {"id": "gitlab", "strength": "strong"},
+            ],
+        }
+        with patch("onilock.run.get_password_health_report", return_value=payload):
+            result = runner.invoke(app, ["health", "--all", "--json"])
+        self.assertEqual(result.exit_code, 0)
+        data = json.loads(result.output)
+        self.assertEqual(data["summary"]["total"], 2)
+
+
+class TestUnlockCommands(unittest.TestCase):
+    def test_unlock_with_pin_option(self):
+        from onilock.run import app
+
+        with patch(
+            "onilock.run.unlock_with_pin",
+            return_value={"unlocked": True, "pin_enabled": True, "ttl_sec": 600},
+        ) as mock_unlock:
+            result = runner.invoke(app, ["unlock", "--pin", "1234"])
+
+        self.assertEqual(result.exit_code, 0)
+        mock_unlock.assert_called_once_with("1234")
+
+    def test_pin_reset_with_pin_option(self):
+        from onilock.run import app
+
+        with patch("onilock.run.pin_unlock_required", return_value=False):
+            with patch("onilock.run.reset_profile_pin", return_value={"pin_enabled": True}) as mock_reset:
+                result = runner.invoke(app, ["pin", "reset", "--pin", "1234"])
+
+        self.assertEqual(result.exit_code, 0)
+        mock_reset.assert_called_once_with("1234", master_password=None)
+
+    def test_pin_reset_while_locked_needs_master_password(self):
+        from onilock.run import app
+
+        with patch("onilock.run.pin_unlock_required", return_value=True):
+            with patch("onilock.run.reset_profile_pin") as mock_reset:
+                result = runner.invoke(app, ["pin", "reset", "--pin", "1234"])
+
+        self.assertEqual(result.exit_code, 1)
+        self.assertIn("--master-password", result.output)
+        mock_reset.assert_not_called()
+
+    def test_pin_reset_while_locked_with_master_password(self):
+        from onilock.run import app
+
+        with patch("onilock.run.pin_unlock_required", return_value=True):
+            with patch("onilock.run.reset_profile_pin", return_value={"pin_enabled": False}) as mock_reset:
+                result = runner.invoke(
+                    app, ["pin", "reset", "--pin", "", "--master-password", "secret"]
+                )
+
+        self.assertEqual(result.exit_code, 0)
+        mock_reset.assert_called_once_with("", master_password="secret")
+
+    def test_notes_get_denied_when_unlock_gate_fails(self):
+        from onilock.run import app
+
+        with patch("onilock.run.require_unlock_if_enabled", side_effect=SystemExit(1)):
+            with patch("onilock.run.get_account_note") as mock_get:
+                result = runner.invoke(app, ["notes", "get", "github"])
+        self.assertNotEqual(result.exit_code, 0)
+        mock_get.assert_not_called()
+
+    def test_show_denied_when_unlock_gate_fails(self):
+        from onilock.run import app
+
+        with patch("onilock.run.require_unlock_if_enabled", side_effect=SystemExit(1)):
+            with patch("onilock.run.get_account_secret") as mock_show:
+                result = runner.invoke(app, ["show", "github"])
+        self.assertNotEqual(result.exit_code, 0)
+        mock_show.assert_not_called()
+
+
+class TestShellSafeJsonOutputs(unittest.TestCase):
+    def test_list_json_output(self):
+        from onilock.run import app
+
+        payload = [{"id": "github", "username": "u", "url": "https://github.com"}]
+        with patch("onilock.run.get_accounts_payload", return_value=payload):
+            result = runner.invoke(app, ["list", "--json"])
+        self.assertEqual(result.exit_code, 0)
+        data = json.loads(result.output)
+        self.assertEqual(data[0]["id"], "github")
+
+    def test_list_files_json_output(self):
+        from onilock.run import app
+
+        payload = [{"id": "doc1", "src": "/tmp/doc.txt"}]
+        with patch("onilock.run.get_files_payload", return_value=payload):
+            result = runner.invoke(app, ["list-files", "--json"])
+        self.assertEqual(result.exit_code, 0)
+        data = json.loads(result.output)
+        self.assertEqual(data[0]["id"], "doc1")
+
+    def test_doctor_json_output(self):
+        from onilock.run import app
+
+        payload = {
+            "ok": True,
+            "checks": [{"name": "vault_writable", "ok": True, "detail": ""}],
+        }
+        with patch("onilock.run._collect_doctor_payload", return_value=payload):
+            result = runner.invoke(app, ["doctor", "--json"])
+        self.assertEqual(result.exit_code, 0)
+        data = json.loads(result.output)
+        self.assertTrue(data["ok"])
+
+
+class TestImportSecretsCommand(unittest.TestCase):
+    def test_import_secrets_json(self):
+        from onilock.run import app
+
+        payload = {
+            "format": "csv",
+            "processed": 2,
+            "created": 1,
+            "updated": 0,
+            "skipped_existing": 1,
+            "invalid": 0,
+            "dry_run": True,
+        }
+        with patch("onilock.run.require_unlock_if_enabled"):
+            with patch("onilock.run.import_secrets", return_value=payload) as mock_import:
+                result = runner.invoke(
+                    app,
+                    [
+                        "import-secrets",
+                        "--format",
+                        "csv",
+                        "--path",
+                        "/tmp/secrets.csv",
+                        "--dry-run",
+                        "--json",
+                    ],
+                )
+        self.assertEqual(result.exit_code, 0)
+        data = json.loads(result.output)
+        self.assertEqual(data["format"], "csv")
+        mock_import.assert_called_once_with(
+            "csv",
+            "/tmp/secrets.csv",
+            dry_run=True,
+            replace_existing=False,
+        )
+
+
+class TestDoctorEnhanced(unittest.TestCase):
+    def test_collect_doctor_payload_contains_profile_and_unlock(self):
+        from onilock.run import _collect_doctor_payload
+
+        profile_data = {
+            "name": "work",
+            "master_password": "x",
+            "accounts": [],
+            "files": [],
+            "pin_enabled": True,
+            "pin_hash": "abc",
+        }
+        engine = MagicMock()
+        engine.read.return_value = profile_data
+
+        with patch("onilock.run.get_active_profile", return_value="work"):
+            with patch("onilock.run.get_profile_engine", return_value=engine):
+                with patch("onilock.run.is_profile_unlocked", return_value=False):
+                    with patch("onilock.run.os.access", return_value=True):
+                        with patch("subprocess.run"):
+                            with patch("keyring.get_password", return_value=None):
+                                with patch("onilock.core.utils.clipboard_available", return_value=True):
+                                    with patch("onilock.run.KeyStoreManager") as mock_ks:
+                                        inst = MagicMock()
+                                        inst._get_persisted_backend.return_value = "vault"
+                                        mock_ks.return_value = inst
+                                        payload = _collect_doctor_payload(verbose=True)
+
+        self.assertEqual(payload["profile"]["active"], "work")
+        self.assertTrue(payload["unlock"]["required"])
+        self.assertIn("checks", payload)
+
+    def test_doctor_verbose_human_output(self):
+        from onilock.run import app
+
+        payload = {
+            "ok": False,
+            "profile": {"active": "work", "pin_enabled": True},
+            "unlock": {"required": True, "unlocked": False},
+            "keystore": {"backend": "vault"},
+            "checks": [{"name": "vault_dir_writable", "ok": False, "detail": "/tmp"}],
+        }
+        with patch("onilock.run._collect_doctor_payload", return_value=payload):
+            result = runner.invoke(app, ["doctor", "--verbose"])
+        self.assertEqual(result.exit_code, 0)
+        self.assertIn("vault_dir_writable", result.output)
+        self.assertIn("/tmp", result.output)
+
+
+class TestVaultCheckRepairCommands(unittest.TestCase):
+    def test_vault_check_json(self):
+        from onilock.run import app
+
+        payload = {"ok": False, "issues": [{"code": "dangling_file_metadata"}]}
+        with patch("onilock.run.vault_check", return_value=payload):
+            result = runner.invoke(app, ["vault", "check", "--json"])
+        self.assertEqual(result.exit_code, 0)
+        data = json.loads(result.output)
+        self.assertFalse(data["ok"])
+
+    def test_vault_repair_apply_json(self):
+        from onilock.run import app
+
+        payload = {
+            "applied": True,
+            "fixed": {"removed_dangling_files": 1, "normalized_accounts": 1},
+            "issues": [],
+        }
+        with patch("onilock.run.vault_repair", return_value=payload) as mock_repair:
+            result = runner.invoke(app, ["vault", "repair", "--apply", "--json"])
+        self.assertEqual(result.exit_code, 0)
+        data = json.loads(result.output)
+        self.assertTrue(data["applied"])
+        mock_repair.assert_called_once_with(apply=True)
 
 
 class TestProfilesCommand(unittest.TestCase):
@@ -397,6 +822,72 @@ class TestExportVaultCommand(unittest.TestCase):
         self.assertEqual(result.exit_code, 0)
         mock_decrypt.assert_called_once_with("doc1")
         self.assertIn("Skipped all files", result.output)
+
+
+class TestCanCreateIn(unittest.TestCase):
+    def test_missing_dir_uses_closest_existing_parent(self):
+        from onilock.run import _can_create_in
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self.assertTrue(_can_create_in(Path(tmpdir) / "backups" / "nested"))
+            os.chmod(tmpdir, 0o500)
+            try:
+                self.assertFalse(_can_create_in(Path(tmpdir) / "backups"))
+            finally:
+                os.chmod(tmpdir, 0o700)
+
+
+class TestVaultRoundTrip(unittest.TestCase):
+    def test_export_then_import_keeps_notes_and_tags(self):
+        from onilock.core.settings import settings
+        from onilock.run import app
+
+        cipher = Fernet(settings.SECRET_KEY.encode())
+
+        def enc(text):
+            return base64.b64encode(cipher.encrypt(text.encode())).decode()
+
+        profile = {
+            "name": "test_profile",
+            "master_password": "hashed",
+            "vault_version": "1.9.0",
+            "creation_timestamp": 1.0,
+            "accounts": [
+                {
+                    "id": "github",
+                    "encrypted_password": enc("pw"),
+                    "username": "octocat",
+                    "url": None,
+                    "description": None,
+                    "notes": enc("recovery codes"),
+                    "tags": ["prod"],
+                    "created_at": 1,
+                }
+            ],
+            "files": [],
+        }
+        source = MagicMock()
+        source.read.return_value = profile
+        output_path = Path(".onilock_artifacts") / "export-vault-notes-test.zip"
+        with patch("onilock.run.get_profile_engine", return_value=source):
+            with patch("onilock.run.require_unlock_if_enabled"):
+                result = runner.invoke(
+                    app, ["export-vault", "--no-files", f"--output={output_path}"]
+                )
+        self.assertEqual(result.exit_code, 0, result.output)
+
+        target = MagicMock()
+        target.read.return_value = dict(profile, accounts=[])
+        with patch("onilock.run.get_profile_engine", return_value=target):
+            with patch("onilock.run.require_unlock_if_enabled"):
+                result = runner.invoke(app, ["import-vault", str(output_path), "--no-files"])
+        self.assertEqual(result.exit_code, 0, result.output)
+
+        imported = target.write.call_args[0][0]["accounts"][0]
+        self.assertEqual(imported["tags"], ["prod"])
+        self.assertEqual(
+            cipher.decrypt(base64.b64decode(imported["notes"])).decode(), "recovery codes"
+        )
 
 
 class TestExportCommand(unittest.TestCase):
