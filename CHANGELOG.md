@@ -1,5 +1,13 @@
 # Version 1
 
+## v1.8.4
+- Fix OniLock crashing on start when GnuPG is not installed, which is the default on macOS. gpg now starts only when a command needs it, so password commands work without it.
+- Create the PGP key for file encryption the first time a file is encrypted. New vaults never got one, so `encrypt-file` failed even with gpg installed.
+- Offer to install missing system tools (GnuPG, vim, and xclip or wl-clipboard on Linux) with Homebrew, apt, dnf, pacman or zypper. OniLock asks when a command needs a tool, at the end of `initialize-vault`, and in `doctor`, and only installs after you confirm.
+- `erase-user-data` removes the PGP key before clearing the keystore and continues when there is no key or no gpg.
+- `export-vault` stops after the first file when gpg is missing instead of asking once per file.
+- Add macOS installation steps to the README.
+
 ## v1.8.0
 - Introduce versioned AEAD vault format (v2, AES-GCM) with automatic legacy migration.
 - Add export/import encryption, audit logging, and backup/restore workflows.

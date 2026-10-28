@@ -162,6 +162,12 @@ Contributions are welcome! Feel free to submit issues and pull requests.
 
 ## 📝 Changelog
 
+### v1.8.4
+- Fix OniLock crashing on start when GnuPG is not installed (the default on macOS). Password commands now work without gpg.
+- Create the PGP key for file encryption on first use.
+- Offer to install missing system tools (GnuPG, vim, and xclip or wl-clipboard on Linux) with your package manager, after asking first.
+- Add macOS installation steps.
+
 ### v1.8.0
 - Introduce versioned AEAD vault format (v2, AES-GCM) with automatic legacy migration.
 - Add export/import encryption, audit logging, and backup/restore workflows.
