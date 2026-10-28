@@ -377,11 +377,44 @@ class TestUnlockCommands(unittest.TestCase):
     def test_pin_reset_with_pin_option(self):
         from onilock.run import app
 
-        with patch("onilock.run.reset_profile_pin", return_value={"pin_enabled": True}) as mock_reset:
-            result = runner.invoke(app, ["pin", "reset", "--pin", "1234"])
+        with patch("onilock.run.pin_unlock_required", return_value=False):
+            with patch("onilock.run.reset_profile_pin", return_value={"pin_enabled": True}) as mock_reset:
+                result = runner.invoke(app, ["pin", "reset", "--pin", "1234"])
 
         self.assertEqual(result.exit_code, 0)
-        mock_reset.assert_called_once_with("1234")
+        mock_reset.assert_called_once_with("1234", master_password=None)
+
+    def test_pin_reset_while_locked_needs_master_password(self):
+        from onilock.run import app
+
+        with patch("onilock.run.pin_unlock_required", return_value=True):
+            with patch("onilock.run.reset_profile_pin") as mock_reset:
+                result = runner.invoke(app, ["pin", "reset", "--pin", "1234"])
+
+        self.assertEqual(result.exit_code, 1)
+        self.assertIn("--master-password", result.output)
+        mock_reset.assert_not_called()
+
+    def test_pin_reset_while_locked_with_master_password(self):
+        from onilock.run import app
+
+        with patch("onilock.run.pin_unlock_required", return_value=True):
+            with patch("onilock.run.reset_profile_pin", return_value={"pin_enabled": False}) as mock_reset:
+                result = runner.invoke(
+                    app, ["pin", "reset", "--pin", "", "--master-password", "secret"]
+                )
+
+        self.assertEqual(result.exit_code, 0)
+        mock_reset.assert_called_once_with("", master_password="secret")
+
+    def test_notes_get_denied_when_unlock_gate_fails(self):
+        from onilock.run import app
+
+        with patch("onilock.run.require_unlock_if_enabled", side_effect=SystemExit(1)):
+            with patch("onilock.run.get_account_note") as mock_get:
+                result = runner.invoke(app, ["notes", "get", "github"])
+        self.assertNotEqual(result.exit_code, 0)
+        mock_get.assert_not_called()
 
     def test_show_denied_when_unlock_gate_fails(self):
         from onilock.run import app
@@ -789,6 +822,72 @@ class TestExportVaultCommand(unittest.TestCase):
         self.assertEqual(result.exit_code, 0)
         mock_decrypt.assert_called_once_with("doc1")
         self.assertIn("Skipped all files", result.output)
+
+
+class TestCanCreateIn(unittest.TestCase):
+    def test_missing_dir_uses_closest_existing_parent(self):
+        from onilock.run import _can_create_in
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self.assertTrue(_can_create_in(Path(tmpdir) / "backups" / "nested"))
+            os.chmod(tmpdir, 0o500)
+            try:
+                self.assertFalse(_can_create_in(Path(tmpdir) / "backups"))
+            finally:
+                os.chmod(tmpdir, 0o700)
+
+
+class TestVaultRoundTrip(unittest.TestCase):
+    def test_export_then_import_keeps_notes_and_tags(self):
+        from onilock.core.settings import settings
+        from onilock.run import app
+
+        cipher = Fernet(settings.SECRET_KEY.encode())
+
+        def enc(text):
+            return base64.b64encode(cipher.encrypt(text.encode())).decode()
+
+        profile = {
+            "name": "test_profile",
+            "master_password": "hashed",
+            "vault_version": "1.9.0",
+            "creation_timestamp": 1.0,
+            "accounts": [
+                {
+                    "id": "github",
+                    "encrypted_password": enc("pw"),
+                    "username": "octocat",
+                    "url": None,
+                    "description": None,
+                    "notes": enc("recovery codes"),
+                    "tags": ["prod"],
+                    "created_at": 1,
+                }
+            ],
+            "files": [],
+        }
+        source = MagicMock()
+        source.read.return_value = profile
+        output_path = Path(".onilock_artifacts") / "export-vault-notes-test.zip"
+        with patch("onilock.run.get_profile_engine", return_value=source):
+            with patch("onilock.run.require_unlock_if_enabled"):
+                result = runner.invoke(
+                    app, ["export-vault", "--no-files", f"--output={output_path}"]
+                )
+        self.assertEqual(result.exit_code, 0, result.output)
+
+        target = MagicMock()
+        target.read.return_value = dict(profile, accounts=[])
+        with patch("onilock.run.get_profile_engine", return_value=target):
+            with patch("onilock.run.require_unlock_if_enabled"):
+                result = runner.invoke(app, ["import-vault", str(output_path), "--no-files"])
+        self.assertEqual(result.exit_code, 0, result.output)
+
+        imported = target.write.call_args[0][0]["accounts"][0]
+        self.assertEqual(imported["tags"], ["prod"])
+        self.assertEqual(
+            cipher.decrypt(base64.b64decode(imported["notes"])).decode(), "recovery codes"
+        )
 
 
 class TestExportCommand(unittest.TestCase):

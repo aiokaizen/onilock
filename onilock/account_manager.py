@@ -69,6 +69,7 @@ __all__ = [
     "unlock_with_pin",
     "reset_profile_pin",
     "require_unlock_if_enabled",
+    "pin_unlock_required",
     "is_profile_unlocked",
     "search_accounts",
     "remove_account",
@@ -112,6 +113,10 @@ def _unlock_ttl_sec() -> int:
     except (TypeError, ValueError):
         return 600
     return value if value > 0 else 600
+
+
+def _pin_lockout_key(profile_name: str) -> str:
+    return f"{profile_name}:pin"
 
 
 def _validate_pin(pin: str) -> None:
@@ -254,10 +259,13 @@ def get_profile_engine():
     return db_manager.add_engine("data", config_filepath, is_encrypted=True)
 
 
-def reset_profile_pin(pin: Optional[str]) -> dict:
+def reset_profile_pin(pin: Optional[str], master_password: Optional[str] = None) -> dict:
     """
     Set, change, or disable the profile PIN.
     Pass an empty string to disable PIN-based unlock gating.
+
+    When a PIN is already set, the vault must be unlocked or the master
+    password given, otherwise anyone could remove the PIN.
     """
     engine = get_profile_engine()
     if not engine:
@@ -273,6 +281,17 @@ def reset_profile_pin(pin: Optional[str]) -> dict:
         exit(1)
 
     profile = Profile(**data)
+    if profile.pin_enabled and not is_profile_unlocked(profile.name):
+        if not master_password or not verify_master_password(master_password):
+            audit("auth.pin.reset_denied", profile=profile.name)
+            error(
+                "Changing the PIN needs the master password, or run "
+                "[bold]onilock unlock[/bold] first."
+            )
+            exit(1)
+        # verify_master_password may rewrite the profile (bcrypt upgrade).
+        profile = Profile(**engine.read())
+
     if pin is None or pin == "":
         profile.pin_enabled = False
         profile.pin_hash = None
@@ -315,6 +334,15 @@ def unlock_with_pin(pin: str) -> dict:
         info("PIN unlock is disabled for this profile.")
         return {"unlocked": True, "pin_enabled": False}
 
+    # A 4-digit PIN has 10,000 values, so failed attempts share the
+    # master password lockout rules under a separate key.
+    lockout_key = _pin_lockout_key(profile.name)
+    locked, remaining = is_locked(lockout_key)
+    if locked:
+        error(f"Too many failed PIN attempts. Try again in {remaining}s.")
+        audit("auth.pin.locked_out", profile=profile.name, remaining=remaining)
+        exit(1)
+
     try:
         pin_hash = base64.b64decode(profile.pin_hash)
     except Exception:
@@ -322,10 +350,13 @@ def unlock_with_pin(pin: str) -> dict:
         exit(1)
 
     if not bcrypt.checkpw(pin.encode(), pin_hash):
-        audit("auth.pin.failed", profile=profile.name)
+        failed = record_failure(lockout_key)
+        audit("auth.pin.failed", profile=profile.name, attempts=failed)
+        rate_limit_delay(failed)
         error("Invalid PIN.")
         exit(1)
 
+    clear_failures(lockout_key)
     expires_at = _set_profile_unlock(profile.name)
     audit("auth.pin.unlocked", profile=profile.name, expires_at=expires_at)
     return {
@@ -336,28 +367,30 @@ def unlock_with_pin(pin: str) -> dict:
     }
 
 
+def pin_unlock_required() -> bool:
+    """
+    Return True when the active profile has a PIN and no unlock session.
+    """
+    engine = get_profile_engine()
+    if not engine:
+        return False
+    data = engine.read()
+    if not data:
+        return False
+
+    profile = Profile(**data)
+    return profile.pin_enabled and not is_profile_unlocked(profile.name)
+
+
 def require_unlock_if_enabled() -> None:
     """
     Enforce unlock gate only when PIN is enabled on the active profile.
     """
-    engine = get_profile_engine()
-    if not engine:
-        return
-    data = engine.read()
-    if not data:
+    if not pin_unlock_required():
         return
 
-    profile = Profile(**data)
-    if not profile.pin_enabled:
-        return
-
-    if is_profile_unlocked(profile.name):
-        return
-
-    error(
-        "Vault is locked. Run [bold]onilock unlock[/bold] (or pass [bold]--pin[/bold]) first."
-    )
-    audit("auth.pin.locked", profile=profile.name)
+    error("Vault is locked. Run [bold]onilock unlock[/bold] first.")
+    audit("auth.pin.locked", profile=settings.DB_NAME)
     exit(1)
 
 
@@ -685,7 +718,7 @@ def _score_match(query: str, value: str) -> float:
 
 def search_accounts(query: str, limit: int = 10):
     """
-    Fuzzy search accounts by id, username, url, description, tags and notes.
+    Fuzzy search accounts by id, username, url, description and tags.
     """
     if not query or not query.strip():
         return []
@@ -703,7 +736,6 @@ def search_accounts(query: str, limit: int = 10):
     for account in profile.accounts:
         tags = getattr(account, "tags", []) or []
         tags_str = " ".join(str(t) for t in tags)
-        notes = getattr(account, "notes", "") or ""
 
         candidates = [
             account.id or "",
@@ -711,7 +743,6 @@ def search_accounts(query: str, limit: int = 10):
             account.url or "",
             account.description or "",
             tags_str,
-            notes,
         ]
         score = max((_score_match(q, value) for value in candidates), default=0.0)
         if score < 0.45:
@@ -1050,7 +1081,7 @@ def _parse_csv_records(path: str) -> list[dict]:
                 {
                     "id": account_id,
                     "username": (lowered.get("username") or lowered.get("user") or "").strip(),
-                    "password": (lowered.get("password") or lowered.get("pass") or "").strip(),
+                    "password": lowered.get("password") or lowered.get("pass") or "",
                     "url": (lowered.get("url") or "").strip(),
                     "notes": (lowered.get("notes") or lowered.get("note") or "").strip(),
                     "tags": _split_tags(tags_raw),
@@ -1065,21 +1096,32 @@ def _parse_keepass_xml_records(path: str) -> list[dict]:
     except ET.ParseError as exc:
         raise RuntimeError(f"Invalid KeePass XML: {exc}") from exc
 
+    root = tree.getroot()
+    recycle_bin = (root.findtext("Meta/RecycleBinUUID") or "").strip()
+
+    def _entries(group):
+        if recycle_bin and (group.findtext("UUID") or "").strip() == recycle_bin:
+            return
+        # Direct children only: entries under <History> are older versions.
+        yield from group.findall("Entry")
+        for child in group.findall("Group"):
+            yield from _entries(child)
+
     records = []
-    for entry in tree.findall(".//Entry"):
+    for entry in (e for group in root.findall("Root/Group") for e in _entries(group)):
         values = {}
         for string_node in entry.findall("String"):
             key = (string_node.findtext("Key") or "").strip()
-            value = (string_node.findtext("Value") or "").strip()
+            value = string_node.findtext("Value") or ""
             if key:
-                values[key] = value
+                values[key] = value if key == "Password" else value.strip()
 
         tags_raw = (entry.findtext("Tags") or values.get("Tags") or "").strip()
         records.append(
             {
                 "id": (values.get("Title") or values.get("id") or "").strip(),
                 "username": (values.get("UserName") or "").strip(),
-                "password": (values.get("Password") or "").strip(),
+                "password": values.get("Password") or "",
                 "url": (values.get("URL") or "").strip(),
                 "notes": (values.get("Notes") or "").strip(),
                 "tags": _split_tags(tags_raw),
@@ -1166,8 +1208,8 @@ def import_secrets(
     changed = False
     for record in records:
         account_id = record.get("id", "").strip()
-        password = record.get("password", "").strip()
-        if not account_id or not password:
+        password = record.get("password", "")
+        if not account_id or not password.strip():
             summary["invalid"] += 1
             continue
 
@@ -1835,11 +1877,16 @@ def rotate_secret_key():
     cipher_old = Fernet(old_key.encode())
     cipher_new = Fernet(new_key.encode())
 
+    def _reencrypt(value: str) -> str:
+        decrypted = cipher_old.decrypt(base64.b64decode(value))
+        return base64.b64encode(cipher_new.encrypt(decrypted)).decode()
+
     for account in profile.accounts:
-        encrypted_password = base64.b64decode(account.encrypted_password)
-        decrypted_password = cipher_old.decrypt(encrypted_password)
-        reencrypted = cipher_new.encrypt(decrypted_password)
-        account.encrypted_password = base64.b64encode(reencrypted).decode()
+        account.encrypted_password = _reencrypt(account.encrypted_password)
+        if account.notes:
+            account.notes = _reencrypt(account.notes)
+        for version in account.history:
+            version.encrypted_password = _reencrypt(version.encrypted_password)
 
     engine.write(profile.model_dump())
 

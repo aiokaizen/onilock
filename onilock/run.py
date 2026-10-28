@@ -3,6 +3,7 @@ import sys
 import os
 import json
 import base64
+from datetime import datetime
 import zipfile
 import io
 import hashlib
@@ -40,7 +41,9 @@ from onilock.account_manager import (
     initialize,
     list_accounts,
     list_files,
+    pin_unlock_required,
     remove_account_tags,
+    verify_master_password,
     require_unlock_if_enabled,
     reset_profile_pin,
     search_accounts,
@@ -117,6 +120,17 @@ def _decrypt_export(payload: bytes, passphrase: str) -> bytes:
     return Fernet(key).decrypt(token)
 
 
+def _prompt_new_pin(text: str) -> str:
+    """Prompt twice for a new PIN without echoing it. Empty means no PIN."""
+    return typer.prompt(
+        text,
+        default="",
+        show_default=False,
+        hide_input=True,
+        confirmation_prompt=True,
+    )
+
+
 @app.command(rich_help_panel="Vault")
 @exception_handler
 def initialize_vault(
@@ -167,11 +181,7 @@ def initialize_vault(
         master_password = typer.prompt("Master password", default="", hide_input=True)
 
     if pin is None and sys.stdin.isatty():
-        pin = typer.prompt(
-            "Optional 4-digit PIN (leave empty to disable)",
-            default="",
-            hide_input=False,
-        )
+        pin = _prompt_new_pin("Optional 4-digit PIN (leave empty to disable)")
 
     master_password = initialize(master_password, pin=pin)
 
@@ -404,6 +414,7 @@ def import_vault(
                     )
                     continue
                 encrypted_password = cipher.encrypt(account["password"].encode())
+                notes = account.get("notes")
                 profile.accounts.append(
                     Account(
                         id=account_id,
@@ -411,6 +422,12 @@ def import_vault(
                         username=account.get("username", ""),
                         url=account.get("url"),
                         description=account.get("description"),
+                        notes=(
+                            base64.b64encode(cipher.encrypt(notes.encode())).decode()
+                            if notes
+                            else None
+                        ),
+                        tags=account.get("tags", []),
                         created_at=account.get("created_at", int(naive_utcnow().timestamp())),
                         is_weak_password=account.get("is_weak_password", False),
                     )
@@ -571,6 +588,11 @@ def _export_vault_impl(
             decrypted_password = cipher.decrypt(
                 base64.b64decode(encrypted_password)
             ).decode()
+            notes = (
+                cipher.decrypt(base64.b64decode(account.notes)).decode()
+                if account.notes
+                else ""
+            )
             accounts.append(
                 {
                     "id": account.id,
@@ -578,6 +600,8 @@ def _export_vault_impl(
                     "password": decrypted_password,
                     "url": account.url,
                     "description": account.description,
+                    "notes": notes,
+                    "tags": account.tags,
                     "created_at": account.created_at,
                     "is_weak_password": account.is_weak_password,
                 }
@@ -959,7 +983,7 @@ def search(
     ),
 ):
     """
-    Fuzzy-search accounts by id, username, URL, description, tags, and notes.
+    Fuzzy-search accounts by id, username, URL, description, and tags.
     """
     results = search_accounts(query, limit=limit)
     if json_output:
@@ -1068,7 +1092,7 @@ def history(
     for item in entries:
         table.add_row(
             str(item["index"]),
-            str(item["created_at"]),
+            datetime.fromtimestamp(item["created_at"]).strftime("%Y-%m-%d %H:%M"),
             item["reason"],
         )
     console.print(table)
@@ -1205,8 +1229,26 @@ def pin_reset(
         "--pin",
         help="4-digit PIN. Pass an empty value to disable PIN.",
     ),
+    master_password: Optional[str] = typer.Option(
+        None,
+        "--master-password",
+        help="Needed to change an existing PIN while the vault is locked.",
+    ),
 ):
     """Set, change, or disable the profile PIN."""
+    if master_password is None and pin_unlock_required():
+        if not sys.stdin.isatty():
+            console.print(
+                "[bold red]✗[/bold red] The vault is locked. Run [bold]onilock unlock[/bold] "
+                "first or pass [bold]--master-password[/bold]."
+            )
+            raise SystemExit(1)
+        master_password = typer.prompt("Master password", hide_input=True)
+        # Check it now so a typo doesn't cost the user two PIN prompts.
+        if not verify_master_password(master_password):
+            console.print("[bold red]✗[/bold red] Wrong master password.")
+            raise SystemExit(1)
+
     value = pin
     if value is None:
         if not sys.stdin.isatty():
@@ -1214,13 +1256,9 @@ def pin_reset(
                 "[bold red]✗[/bold red] Provide [bold]--pin[/bold] in non-interactive mode."
             )
             raise SystemExit(1)
-        value = typer.prompt(
-            "New 4-digit PIN (leave empty to disable)",
-            default="",
-            hide_input=False,
-        )
+        value = _prompt_new_pin("New 4-digit PIN (leave empty to disable)")
 
-    payload = reset_profile_pin(value)
+    payload = reset_profile_pin(value, master_password=master_password)
     if payload["pin_enabled"]:
         console.print("[bold green]✓[/bold green] PIN updated.")
     else:
@@ -1239,6 +1277,7 @@ def notes_set(
     ),
 ):
     """Set an encrypted note on an account."""
+    require_unlock_if_enabled()
     if text and note_file:
         console.print("[bold red]✗[/bold red] Use either --text or --file, not both.")
         raise SystemExit(1)
@@ -1263,6 +1302,7 @@ def notes_get(
     ),
 ):
     """Get an account note."""
+    require_unlock_if_enabled()
     payload = get_account_note(account)
     if json_output:
         typer.echo(json.dumps(payload))
@@ -1281,6 +1321,7 @@ def notes_get(
 @exception_handler
 def notes_clear(account: str):
     """Clear an account note."""
+    require_unlock_if_enabled()
     clear_account_note(account)
     console.print(
         f"[bold green]✓[/bold green] Note cleared for [bold]{account}[/bold]."
@@ -1433,6 +1474,13 @@ def generate_pwd(
     )
 
 
+def _can_create_in(path: Path) -> bool:
+    """True if path is writable, or could be created (it's made on first use)."""
+    while not path.exists() and path != path.parent:
+        path = path.parent
+    return os.access(path, os.W_OK)
+
+
 def _collect_doctor_payload(verbose: bool = False) -> dict:
     checks = []
     active_profile = get_active_profile() or settings.DB_NAME
@@ -1461,7 +1509,7 @@ def _collect_doctor_payload(verbose: bool = False) -> dict:
     checks.append(
         {
             "name": "backup_dir_writable",
-            "ok": os.access(backup_dir, os.W_OK),
+            "ok": _can_create_in(backup_dir),
             "detail": str(backup_dir) if verbose else "",
         }
     )
@@ -1493,14 +1541,6 @@ def _collect_doctor_payload(verbose: bool = False) -> dict:
                 "name": "gpg_home_writable",
                 "ok": os.access(settings.GPG_HOME, os.W_OK),
                 "detail": settings.GPG_HOME if verbose else "",
-            }
-        )
-    else:
-        checks.append(
-            {
-                "name": "gpg_home_configured",
-                "ok": False,
-                "detail": "" if not verbose else "ONI_GPG_HOME is not configured",
             }
         )
 

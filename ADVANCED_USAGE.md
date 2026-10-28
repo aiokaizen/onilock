@@ -43,7 +43,9 @@ Use fuzzy search to quickly find accounts by:
 - username
 - URL
 - description
-- tags and notes (when present)
+- tags (when present)
+
+Notes are encrypted, so search doesn't look inside them.
 
 Examples:
 ```sh
@@ -145,6 +147,8 @@ Lifecycle:
 - Set at initialization with `onilock initialize-vault --pin 1234`.
 - Set/change later with `onilock pin reset --pin 1234`.
 - Disable by clearing PIN with `onilock pin reset` and submitting empty input.
+- Changing or removing an existing PIN needs an unlocked session or the master password
+  (prompted, or `--master-password` in non-interactive mode).
 
 Unlock flow:
 ```sh
@@ -155,6 +159,10 @@ Session behavior:
 - Unlock state is cached in `.unlock.json` under OniLock base directory.
 - Session timeout is controlled by `ONI_UNLOCK_TTL_SEC` (default `600` seconds).
 - Sensitive commands require an unlocked session only when PIN is enabled.
+- Wrong PINs use the same lockout settings as the master password (`ONI_LOCKOUT_ATTEMPTS`,
+  `ONI_LOCKOUT_WINDOW_SEC`, `ONI_LOCKOUT_DURATION_SEC`), counted separately.
+- The PIN doesn't encrypt anything. It stops casual use of an unlocked terminal, not someone
+  with full access to your user account.
 
 ## Shell-Safe JSON Outputs
 Core commands support deterministic `--json` output for automation.
@@ -194,6 +202,8 @@ Behavior:
 - Missing `id` or `password` rows are counted as invalid.
 - Existing accounts are skipped unless `--replace-existing` is passed.
 - `--dry-run` validates/parses inputs and reports counts without writing to vault.
+- Passwords are imported exactly as written, including leading or trailing spaces.
+- For KeePass, older entry versions (`History`) and the recycle bin are not imported.
 
 ## Vault Check / Repair
 Use integrity commands to detect and repair recoverable metadata issues.
@@ -247,7 +257,7 @@ onilock import-vault export.zip --replace
 ```
 
 Exports include:
-- `accounts.json` (if passwords are exported)
+- `accounts.json` (if passwords are exported, with notes and tags)
 - `files/` (if files are exported)
 - `files.json` (metadata)
 - `manifest.json` (checksums)

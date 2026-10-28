@@ -100,7 +100,7 @@ onilock search github
 onilock search git --limit 5
 onilock search github --json
 ```
-Fuzzy-searches accounts by name, username, URL, description, tags, and notes.
+Fuzzy-searches accounts by name, username, URL, description and tags.
 
 ### 🔹 Copy a Password to Clipboard
 ```sh
@@ -162,6 +162,9 @@ onilock unlock --pin 1234
 onilock pin reset --pin 5678
 ```
 Adds an optional 4-digit PIN gate for sensitive commands. Leave PIN empty in `pin reset` to disable.
+Changing or removing a PIN needs an unlocked session or the master password, and too many wrong PINs
+lock PIN entry for a few minutes. The PIN doesn't encrypt anything: it stops casual use of an unlocked
+terminal, not someone with full access to your user account.
 
 ### 🔹 Shell-Safe JSON Output
 ```sh
@@ -249,6 +252,14 @@ Contributions are welcome! Feel free to submit issues and pull requests.
 
 
 ## 📝 Changelog
+
+### v1.9.0
+- Add `search`, `show`, `rotate`, `history` and `health` commands.
+- Add encrypted per-account notes and per-account tags.
+- Add an optional 4-digit PIN that gates sensitive commands.
+- Add `import-secrets` for CSV and KeePass XML, plus `vault check` and `vault repair`.
+- Add `--json` output to `list`, `list-files` and `doctor`, and expand `doctor`.
+- Include the v1.8.4 macOS and GnuPG fixes.
 
 ### v1.8.4
 - Fix OniLock crashing on start when GnuPG is not installed (the default on macOS). Password commands now work without gpg.

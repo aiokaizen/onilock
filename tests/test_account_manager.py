@@ -891,11 +891,106 @@ class TestPinUnlock(unittest.TestCase):
                     from onilock.account_manager import reset_profile_pin
 
                     enabled = reset_profile_pin("1234")
-                    disabled = reset_profile_pin("")
+                    with patch(
+                        "onilock.account_manager.verify_master_password",
+                        return_value=True,
+                    ) as mock_verify:
+                        disabled = reset_profile_pin("", master_password="master")
 
         self.assertTrue(enabled["pin_enabled"])
         self.assertFalse(disabled["pin_enabled"])
         self.assertIsNone(store["pin_hash"])
+        mock_verify.assert_called_once_with("master")
+
+    def _reset_existing_pin(self, new_pin, master_password=None, verified=False, unlocked=False):
+        profile = self._profile_with_pin()
+        engine = _make_engine(profile)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            unlock_path = Path(tmpdir) / ".unlock.json"
+            with patch("onilock.account_manager.get_profile_engine", return_value=engine):
+                with patch("onilock.account_manager._unlock_path", return_value=unlock_path):
+                    with patch(
+                        "onilock.account_manager.verify_master_password",
+                        return_value=verified,
+                    ) as mock_verify:
+                        from onilock.account_manager import (
+                            _set_profile_unlock,
+                            reset_profile_pin,
+                        )
+
+                        if unlocked:
+                            _set_profile_unlock(profile.name)
+                        try:
+                            result = reset_profile_pin(new_pin, master_password=master_password)
+                        except SystemExit as exc:
+                            result = exc
+        return result, engine, mock_verify
+
+    def test_reset_existing_pin_without_auth_is_refused(self):
+        result, engine, mock_verify = self._reset_existing_pin("")
+        self.assertIsInstance(result, SystemExit)
+        engine.write.assert_not_called()
+        mock_verify.assert_not_called()
+
+    def test_reset_existing_pin_with_wrong_master_password_is_refused(self):
+        result, engine, _ = self._reset_existing_pin("", master_password="wrong")
+        self.assertIsInstance(result, SystemExit)
+        engine.write.assert_not_called()
+
+    def test_reset_existing_pin_with_master_password(self):
+        result, engine, mock_verify = self._reset_existing_pin(
+            "5678", master_password="master", verified=True
+        )
+        self.assertEqual(result, {"pin_enabled": True})
+        mock_verify.assert_called_once_with("master")
+        written = engine.write.call_args[0][0]
+        self.assertTrue(
+            bcrypt.checkpw(b"5678", base64.b64decode(written["pin_hash"]))
+        )
+
+    def test_reset_existing_pin_when_unlocked(self):
+        result, engine, mock_verify = self._reset_existing_pin("", unlocked=True)
+        self.assertEqual(result, {"pin_enabled": False})
+        mock_verify.assert_not_called()
+        engine.write.assert_called_once()
+
+    def test_wrong_pin_counts_toward_lockout(self):
+        profile = self._profile_with_pin()
+        engine = _make_engine(profile)
+        with patch("onilock.account_manager.get_profile_engine", return_value=engine):
+            with patch("onilock.account_manager.is_locked", return_value=(False, 0)):
+                with patch(
+                    "onilock.account_manager.record_failure", return_value=1
+                ) as mock_record:
+                    with patch("onilock.account_manager.rate_limit_delay"):
+                        with patch(
+                            "onilock.account_manager._set_profile_unlock"
+                        ) as mock_unlock:
+                            from onilock.account_manager import unlock_with_pin
+
+                            with self.assertRaises(SystemExit):
+                                unlock_with_pin("9999")
+
+        mock_record.assert_called_once_with("test_profile:pin")
+        mock_unlock.assert_not_called()
+
+    def test_locked_out_pin_is_refused_even_when_correct(self):
+        profile = self._profile_with_pin()
+        engine = _make_engine(profile)
+        with patch("onilock.account_manager.get_profile_engine", return_value=engine):
+            with patch(
+                "onilock.account_manager.is_locked", return_value=(True, 120)
+            ) as mock_locked:
+                with patch(
+                    "onilock.account_manager._set_profile_unlock"
+                ) as mock_unlock:
+                    from onilock.account_manager import unlock_with_pin
+
+                    with self.assertRaises(SystemExit):
+                        unlock_with_pin("1234")
+
+        mock_locked.assert_called_once_with("test_profile:pin")
+        mock_unlock.assert_not_called()
 
     def test_unlock_and_expiry(self):
         profile = self._profile_with_pin()
@@ -904,10 +999,16 @@ class TestPinUnlock(unittest.TestCase):
             unlock_path = Path(tmpdir) / ".unlock.json"
             with patch("onilock.account_manager.get_profile_engine", return_value=engine):
                 with patch("onilock.account_manager._unlock_path", return_value=unlock_path):
-                    with patch("onilock.account_manager.time.time", return_value=1000):
-                        from onilock.account_manager import unlock_with_pin, is_profile_unlocked
+                    with patch("onilock.account_manager.is_locked", return_value=(False, 0)):
+                        with patch("onilock.account_manager.clear_failures") as mock_clear:
+                            with patch("onilock.account_manager.time.time", return_value=1000):
+                                from onilock.account_manager import (
+                                    unlock_with_pin,
+                                    is_profile_unlocked,
+                                )
 
-                        payload = unlock_with_pin("1234")
+                                payload = unlock_with_pin("1234")
+                    mock_clear.assert_called_once_with("test_profile:pin")
 
                     self.assertTrue(payload["unlocked"])
                     with patch("onilock.account_manager.time.time", return_value=1001):
@@ -1025,6 +1126,96 @@ class TestImportSecrets(unittest.TestCase):
                         )
 
         self.assertEqual(payload["created"], 1)
+
+    def test_keepass_skips_history_and_recycle_bin(self):
+        def entry(title, password, extra=""):
+            return (
+                "<Entry>"
+                f"<String><Key>Title</Key><Value>{title}</Value></String>"
+                f"<String><Key>Password</Key><Value>{password}</Value></String>"
+                f"{extra}"
+                "</Entry>"
+            )
+
+        old = entry("gitlab", "OldPass!123")
+        xml = (
+            "<KeePassFile><Meta><RecycleBinUUID>BIN</RecycleBinUUID></Meta>"
+            "<Root><Group><UUID>ROOT</UUID>"
+            + entry("gitlab", "NewPass!123", f"<History>{old}</History>")
+            + "<Group><UUID>WORK</UUID>"
+            + entry("jira", "JiraPass!123")
+            + "</Group>"
+            + "<Group><UUID>BIN</UUID>"
+            + entry("deleted", "Gone!123")
+            + "<Group><UUID>OLDGROUP</UUID>"
+            + entry("deleted-nested", "Gone!456")
+            + "</Group></Group>"
+            "</Group></Root></KeePassFile>"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            xml_path = Path(tmpdir) / "keepass.xml"
+            xml_path.write_text(xml)
+            from onilock.account_manager import _parse_keepass_xml_records
+
+            records = _parse_keepass_xml_records(str(xml_path))
+
+        self.assertEqual(
+            [(r["id"], r["password"]) for r in records],
+            [("gitlab", "NewPass!123"), ("jira", "JiraPass!123")],
+        )
+
+    def test_import_keeps_password_whitespace(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            csv_path = Path(tmpdir) / "secrets.csv"
+            csv_path.write_text('id,password\ngithub," pass word "\n')
+            from onilock.account_manager import _parse_csv_records
+
+            records = _parse_csv_records(str(csv_path))
+
+        self.assertEqual(records[0]["password"], " pass word ")
+
+
+class TestRotateSecretKey(unittest.TestCase):
+    def test_reencrypts_notes_and_history(self):
+        from onilock.db.models import PasswordVersion
+
+        old_cipher = Fernet(TEST_SECRET_KEY.encode())
+
+        def enc(text):
+            return base64.b64encode(old_cipher.encrypt(text.encode())).decode()
+
+        profile = _make_profile(with_account=True)
+        profile.accounts[0].notes = enc("recovery codes")
+        profile.accounts[0].history = [
+            PasswordVersion(encrypted_password=enc("old-pass"), created_at=1, reason="rotate")
+        ]
+        engine = _make_engine(profile)
+        setup_engine = MagicMock()
+        setup_engine.read.return_value = {}
+
+        with patch("onilock.account_manager.get_profile_engine", return_value=engine):
+            with patch("onilock.account_manager.settings") as ms:
+                ms.SECRET_KEY = TEST_SECRET_KEY
+                ms.DB_NAME = "test_profile"
+                with patch("onilock.account_manager.DatabaseManager") as mock_db:
+                    mock_db.return_value.get_engine.return_value = setup_engine
+                    with patch("onilock.account_manager.keystore") as mock_keystore:
+                        with patch("onilock.account_manager.getlogin", return_value="user"):
+                            with patch("onilock.account_manager.audit"):
+                                from onilock.account_manager import rotate_secret_key
+
+                                rotate_secret_key()
+
+        new_key = mock_keystore.set_password.call_args[0][1]
+        new_cipher = Fernet(new_key.encode())
+        account = engine.write.call_args[0][0]["accounts"][0]
+
+        def dec(value):
+            return new_cipher.decrypt(base64.b64decode(value)).decode()
+
+        self.assertEqual(dec(account["encrypted_password"]), "mypassword")
+        self.assertEqual(dec(account["notes"]), "recovery codes")
+        self.assertEqual(dec(account["history"][0]["encrypted_password"]), "old-pass")
 
 
 class TestVaultCheckRepair(unittest.TestCase):
