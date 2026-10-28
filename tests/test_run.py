@@ -65,6 +65,19 @@ class TestInitializeVaultCommand(unittest.TestCase):
         self.assertIn("Initialization Targets", result.output)
         self.assertIn("Vault directory", result.output)
 
+    def test_initialize_vault_offers_missing_tools(self):
+        from onilock.run import app
+
+        deps = [MagicMock()]
+        with patch("onilock.run.initialize"):
+            with patch("onilock.run.system_dependencies", return_value=deps):
+                with patch("onilock.run.ensure_installed") as mock_ensure:
+                    result = runner.invoke(
+                        app, ["initialize-vault", "--master-password=strongpassword"]
+                    )
+        self.assertEqual(result.exit_code, 0)
+        mock_ensure.assert_called_once_with(deps)
+
     def test_initialize_vault_prompts_when_no_password(self):
         from onilock.run import app
 
@@ -351,6 +364,40 @@ class TestExportVaultCommand(unittest.TestCase):
         self.assertEqual(result.exit_code, 0)
         self.assertIn("exported vault", result.output.lower())
 
+    def test_export_vault_without_gpg_stops_after_first_file(self):
+        from onilock.core.exceptions.exceptions import GPGNotAvailableError
+        from onilock.run import app
+
+        file_entry = {
+            "location": "/vault/x.oni",
+            "created_at": 1,
+            "src": "/home/user/doc.txt",
+            "user": "u",
+            "host": "h",
+        }
+        mock_engine = MagicMock()
+        mock_engine.read.return_value = {
+            "name": "test_profile",
+            "master_password": "hashed",
+            "vault_version": "1.8.0",
+            "creation_timestamp": 1.0,
+            "accounts": [],
+            "files": [dict(file_entry, id="doc1"), dict(file_entry, id="doc2")],
+        }
+        output_path = Path(".onilock_artifacts") / "export-vault-nogpg-test.zip"
+        with patch("onilock.run.get_profile_engine", return_value=mock_engine):
+            with patch(
+                "onilock.run.filemanager.decrypt",
+                side_effect=GPGNotAvailableError("no gpg"),
+            ) as mock_decrypt:
+                result = runner.invoke(
+                    app,
+                    ["export-vault", "--no-passwords", f"--output={output_path}"],
+                )
+        self.assertEqual(result.exit_code, 0)
+        mock_decrypt.assert_called_once_with("doc1")
+        self.assertIn("Skipped all files", result.output)
+
 
 class TestExportCommand(unittest.TestCase):
     def test_export_command(self):
@@ -403,6 +450,47 @@ class TestEraseUserDataCommand(unittest.TestCase):
                 input="y\n",
             )
         mock_delete.assert_called_once_with("strongpassword")
+
+
+class TestWithoutGpg(unittest.TestCase):
+    """The CLI must start without gpg; only commands that need it should fail."""
+
+    def _missing_gpg(self):
+        gpg_patch = patch(
+            "onilock.core.gpg.gnupg.GPG", side_effect=OSError("Unable to run gpg")
+        )
+        which_patch = patch("onilock.core.dependencies.shutil.which", return_value=None)
+        gpg_patch.start()
+        which_patch.start()
+        self.addCleanup(gpg_patch.stop)
+        self.addCleanup(which_patch.stop)
+
+    def test_cli_loads_and_runs_without_gpg(self):
+        import importlib
+        import onilock.run
+
+        self._missing_gpg()
+        importlib.reload(onilock.run)
+        result = runner.invoke(
+            onilock.run.app, ["generate-pwd", "--len=12", "--special-chars"]
+        )
+        self.assertEqual(result.exit_code, 0)
+
+    def test_keys_list_reports_missing_gpg(self):
+        from onilock.run import app
+
+        self._missing_gpg()
+        result = runner.invoke(app, ["keys", "list"])
+        self.assertEqual(result.exit_code, 1)
+        self.assertIn("This command needs GnuPG", result.output)
+
+    def test_keys_delete_reports_missing_gpg(self):
+        from onilock.run import app
+
+        self._missing_gpg()
+        result = runner.invoke(app, ["keys", "delete", "--name", "test"], input="y\n")
+        self.assertEqual(result.exit_code, 1)
+        self.assertIn("This command needs GnuPG", result.output)
 
 
 if __name__ == "__main__":

@@ -4,6 +4,7 @@ import unittest
 from unittest.mock import MagicMock, patch, call
 
 from onilock.core.decorators import exception_handler, pre_post_hooks
+from onilock.core.exceptions.exceptions import GPGNotAvailableError
 
 
 class TestExceptionHandler(unittest.TestCase):
@@ -39,6 +40,18 @@ class TestExceptionHandler(unittest.TestCase):
 
         mock_echo.assert_called_once()
         self.assertIsNone(result)
+
+    def test_gpg_not_available_prints_error_and_exits(self):
+        @exception_handler
+        def my_func():
+            raise GPGNotAvailableError("gpg was not found")
+
+        with patch("onilock.core.decorators.error") as mock_error:
+            with self.assertRaises(SystemExit) as ctx:
+                my_func()
+
+        mock_error.assert_called_once_with("gpg was not found")
+        self.assertEqual(ctx.exception.code, 1)
 
     def test_general_exception_reraises_in_debug_mode(self):
         @exception_handler

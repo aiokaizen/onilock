@@ -30,10 +30,22 @@ With full support for command-line arguments, Onilock empowers users to create c
 
 OniLock is best installed using `pipx` to keep it isolated:
 
-1. **Install pipx**
+1. **Install pipx and GnuPG**
+
+On macOS, with [Homebrew](https://brew.sh):
 ```sh
-sudo apt install pipx
+brew install pipx gnupg
+pipx ensurepath
 ```
+
+On Debian/Ubuntu:
+```sh
+sudo apt install pipx gnupg xclip
+```
+
+GnuPG is only needed for encrypted files (`encrypt-file`, `read-file`, `edit-file` and file exports). Password commands work without it. On Linux, `onilock copy` needs `xclip` (or `wl-clipboard` on Wayland). macOS has a built-in clipboard.
+
+If one of these tools is missing, OniLock tells you when a command needs it and offers to install it with your package manager (Homebrew, apt, dnf, pacman or zypper). It shows the exact command and only runs it if you say yes. `initialize-vault` and `doctor` run the same check.
 
 2. **Install OniLock systemwide**
 
@@ -46,12 +58,15 @@ pipx install onilock
 
 ## ⚠️  Issues
 
-If you encounter any issues with the `initialize-vault` command, make sure the following dependencies are setup in your system:
-
-1. **Ensure xclip and gpg are installed**. If not, run the following command
+If you declined an install prompt, or ran OniLock in a script where it can't ask, install the tools yourself:
 ```sh
-sudo apt install xclip gpg
+brew install gnupg               # macOS
+sudo apt install gnupg xclip     # Debian/Ubuntu
 ```
+
+Over SSH without a graphical session there is no clipboard to copy to, so `onilock copy` can't work there and OniLock won't offer to install `xclip`.
+
+`onilock doctor` checks gpg, the clipboard tool, vim and the vault paths, and offers to install anything missing.
 
 
 ## 📌 Usage

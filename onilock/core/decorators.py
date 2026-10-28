@@ -3,7 +3,9 @@ from typing import Callable, Dict, Optional
 
 import typer
 
+from onilock.core.exceptions.exceptions import GPGNotAvailableError
 from onilock.core.settings import settings
+from onilock.core.ui import error
 
 
 def exception_handler(func):
@@ -19,6 +21,9 @@ def exception_handler(func):
             typer.echo(
                 "This functionality is not implemented in this version.", err=True
             )
+        except GPGNotAvailableError as e:
+            error(str(e))
+            raise SystemExit(1)
         except Exception as e:
             typer.echo(f"Unknown exception was raised in the application: {e}")
             if settings.DEBUG:
